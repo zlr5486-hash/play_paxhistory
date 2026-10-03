@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, useCallback } from 'react'
 import type { GameState } from '../sim/types'
-import { regionName, CENTROIDS } from '../sim/setup'
+import { regionName, CENTROIDS, adjMap } from '../sim/setup'
 import { t } from '../i18n'
 import geo from '../data/world.geo.json'
 import antGeo from '../data/antarctica.geo.json'
@@ -81,6 +81,31 @@ export default function MapView({ state, selected, onSelect, className }: Props)
     for (const w of state.wars) if (!w.over) for (const r of Object.keys(w.occupations)) m.add(r)
     return m
   }, [state.wars])
+
+  // frontline regions: regions adjacent to hostile-held territory in active wars
+  const frontRegions = useMemo(() => {
+    const s = new Set<string>()
+    for (const w of state.wars) {
+      if (w.over) continue
+      const side: Record<string, 'a' | 'd'> = {}
+      w.attackers.forEach(i => side[i] = 'a')
+      w.defenders.forEach(i => side[i] = 'd')
+      const holdOf = (r: string): 'a' | 'd' | null => {
+        const occ = w.occupations[r]
+        const o = occ ?? state.regionOwner[r]
+        return o && side[o] ? side[o] : null
+      }
+      for (const r of Object.keys(PATHS)) {
+        const hs = holdOf(r)
+        if (!hs) continue
+        for (const nb of adjMap[r] ?? []) {
+          const hn = holdOf(nb)
+          if (hn && hn !== hs) { s.add(r); break }
+        }
+      }
+    }
+    return s
+  }, [state.wars, state.regionOwner])
 
   const colorOf = useCallback((regionId: string): string => {
     const occ = occupiedBy[regionId]
@@ -245,6 +270,10 @@ export default function MapView({ state, selected, onSelect, className }: Props)
           })}
           {[...occRegions].map(r => PATHS[r] ? (
             <path key={'occ-' + r} d={PATHS[r]} fill="url(#occ)" stroke="none" pointerEvents="none" />
+          ) : null)}
+          {[...frontRegions].map(r => PATHS[r] ? (
+            <path key={'front-' + r} d={PATHS[r]} fill="none" stroke="#e05555" strokeWidth={1.6 / Math.sqrt(view.k)}
+              strokeDasharray={`${5 / view.k} ${3 / view.k}`} pointerEvents="none" opacity={0.85} />
           ) : null)}
           {labels.map((l, i) => (
             <text

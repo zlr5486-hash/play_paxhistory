@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameState, Lang, PlayerOrder, TreatyType } from './sim/types'
 import { createGame } from './sim/setup'
-import { advanceMonths, applyOrder, proposeTreaty, breakTreaty, declareWar, changeRel, ev } from './sim/engine'
+import { advanceMonths, applyOrder, proposeTreaty, breakTreaty, declareWar, changeRel, ev, imposeSanctions, liftSanctions } from './sim/engine'
+import { sendChat } from './sim/chat'
 import { parseDecree } from './sim/parser'
 import { llmDecree, loadAiSettings, saveAiSettings, type AiSettings } from './llm'
 import { sfx, setMuted } from './sound'
 import { t } from './i18n'
 import Setup from './ui/Setup'
+import ScenarioEditor, { type Scenario } from './ui/ScenarioEditor'
 import Game, { type Toast } from './ui/Game'
 
 const LS_LANG = 'paxmundi_lang'
@@ -19,13 +21,34 @@ function saveState(state: GameState, key: string): void {
 function loadState(key: string): GameState | null {
   try {
     const raw = localStorage.getItem(key)
-    return raw ? JSON.parse(raw) as GameState : null
+    if (!raw) return null
+    const s = JSON.parse(raw) as GameState
+    // migrate older saves to v2/stage-B fields
+    for (const c of Object.values(s.countries ?? {})) {
+      c.nukeProgress ??= 0
+      c.nukes ??= 0
+      c.techTree ??= { inf: 0, arm: 0, air: 0, nav: 0, ind: 0, sci: 0 }
+      c.resources ??= { grain: 0, oil: 0, steel: 0, rare: 0 }
+      c.stockpile ??= { grain: 5, oil: 1, steel: 5, rare: 0 }
+      c.factoriesCiv ??= 1
+      c.factoriesMil ??= 0
+      c.equipment ??= 0
+      c.science ??= 0
+      c.prestige ??= 20
+      c.ideology ??= 'monarchism'
+    }
+    s.achievements ??= []
+    s.history ??= []
+    s.tutorialStep ??= 6
+    s.theme ??= 'dark'
+    s.victoryEnabled ??= false
+    return s
   } catch { return null }
 }
 
 export default function App() {
   const [lang, setLangState] = useState<Lang>(() => (localStorage.getItem(LS_LANG) as Lang) || 'ru')
-  const [screen, setScreen] = useState<'menu' | 'setup' | 'game'>('menu')
+  const [screen, setScreen] = useState<'menu' | 'setup' | 'game' | 'editor'>('menu')
   const [state, setState] = useState<GameState | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -138,6 +161,23 @@ export default function App() {
   })
   const breakTr = (id: number) => mutate(s => { breakTreaty(s, id, s.playerId); sfx.bad() })
 
+  const chat = (target: string, text: string) => mutate(s => { sendChat(s, s.playerId, target, text); sfx.click() })
+  const sanctions = (target: string) => mutate(s => { const ok = imposeSanctions(s, s.playerId, target); if (ok) sfx.treaty(); else sfx.bad() })
+  const liftSanc = (target: string) => mutate(s => { liftSanctions(s, s.playerId, target) })
+  const nuke = (target: string) => mutate(s => { const ok = applyOrder(s, { type: 'nuke_strike', target }); if (ok) sfx.war(); else sfx.bad() })
+
+  // achievement toasts
+  const lastAch = useRef(0)
+  useEffect(() => {
+    const n = state?.achievements?.length ?? 0
+    if (n > lastAch.current && state) {
+      const id = state.achievements![n - 1]
+      toast('🏅 ' + t(state.lang, id), 'ok')
+      sfx.ok()
+    }
+    lastAch.current = n
+  }, [state?.achievements?.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const toggleTheme = () => mutate(s => { s.theme = s.theme === 'dark' ? 'parchment' : 'dark' })
   const toggleMute = () => mutate(s => { s.muted = !s.muted; setMuted(s.muted) })
   const tutNext = () => mutate(s => { s.tutorialStep++ })
@@ -150,6 +190,30 @@ export default function App() {
   }
 
   const hasSave = !!localStorage.getItem(LS_AUTO) || !!localStorage.getItem(LS_MANUAL)
+
+  const playScenario = (sc: Scenario, playerId: string) => {
+    const g = createGame({ year: sc.year, playerId, difficulty: 2, lang })
+    g.regionOwner = { ...sc.regionOwner }
+    for (const [cid, p] of Object.entries(sc.patches)) {
+      const c = g.countries[cid]
+      if (!c) continue
+      if (p.treasury !== undefined) c.treasury = p.treasury
+      if (p.divisions !== undefined) c.divisions = p.divisions
+      if (p.industry !== undefined) c.industry = p.industry
+    }
+    for (const c of Object.values(g.countries)) {
+      if (!Object.values(g.regionOwner).includes(c.id)) c.alive = false
+    }
+    g.scenarioId = sc.id
+    setState(g)
+    setSelected(playerId)
+    setScreen('game')
+    sfx.ok()
+  }
+
+  if (screen === 'editor') {
+    return <ScenarioEditor lang={lang} setLang={setLang} onExit={() => setScreen('menu')} onPlay={playScenario} />
+  }
 
   if (screen === 'setup') {
     return <Setup lang={lang} setLang={setLang} onStart={startGame} onExit={() => setScreen('menu')} />
@@ -180,6 +244,10 @@ export default function App() {
           onToggleTheme={toggleTheme}
           onToggleMute={toggleMute}
           onTutNext={tutNext}
+          onNuke={nuke}
+          onChat={chat}
+          onSanctions={sanctions}
+          onLiftSanctions={liftSanc}
         />
         {showSettings && (
           <div className="overlay" onClick={() => setShowSettings(false)}>
@@ -224,6 +292,7 @@ export default function App() {
         <div className="menu-btns">
           <button className="btn primary big" onClick={() => setScreen('setup')}>{t(lang, 'new_game')}</button>
           {hasSave && <button className="btn big" onClick={load}>{t(lang, 'continue')}</button>}
+          <button className="btn big" onClick={() => setScreen('editor')}>🛠 {t(lang, 'scenario_editor')}</button>
         </div>
         <div className="menu-footer">
           {lang === 'ru'

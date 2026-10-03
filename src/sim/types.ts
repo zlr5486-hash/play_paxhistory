@@ -35,6 +35,27 @@ export interface War {
   playerControlled?: boolean      // player commands manually vs AI minister
   fronts?: Front[]
   nukesUsed?: number
+  directives?: Record<string, Directive>   // per-country stance
+  generals?: Record<string, General>       // commanding general per country
+  offensives?: Record<string, number>      // months of focused offensive left
+}
+
+export type Directive = 'offensive' | 'balanced' | 'defensive'
+
+export type GeneralTrait = 'aggressive' | 'cautious' | 'brilliant' | 'mediocre' | 'logistician'
+
+export interface General { id: number; name: string; skill: number; trait: GeneralTrait }
+
+export interface ChatMsg { from: string; text: string; month: number }
+
+export interface Congress {
+  month: number
+  resolution: string            // i18n key
+  target?: string               // country id targeted by the resolution
+  proposedBy: string
+  votes: Record<string, 'yes' | 'no' | 'abstain'>
+  passed?: boolean
+  playerVoted?: boolean
 }
 
 export interface Front {
@@ -87,6 +108,9 @@ export interface Country {
   techTree: Record<TechBranch, number>
   science: number
   prestige: number
+  // stage B: nuclear program
+  nukeProgress: number   // 0..100
+  nukes: number
 }
 
 export type EventKind = 'war' | 'diplomacy' | 'economy' | 'internal' | 'world' | 'player' | 'tech'
@@ -131,6 +155,11 @@ export interface GameState {
   lastNarrative?: string
   history: { month: number; industry: number; population: number; regions: number }[]
   tutorialStep: number
+  // stage B/C
+  chats?: Record<string, ChatMsg[]>          // key: sorted pair "A|B"
+  achievements?: string[]
+  congress?: Congress
+  scenarioId?: string                        // custom scenario marker
 }
 
 export const monthName = (m: number, lang: Lang): string => {

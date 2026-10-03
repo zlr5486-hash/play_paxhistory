@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { GameState, TreatyType } from '../sim/types'
-import { fmtNum } from '../sim/types'
+import { fmtNum, monthName } from '../sim/types'
 import { regionsOf, power, relOf, hasTreaty, atWarWith } from '../sim/setup'
 import { cbFor } from '../sim/engine'
+import { chatKey } from '../sim/chat'
 import { t, GOV_KEYS, PER_KEYS, TREATY_KEYS } from '../i18n'
 
 interface Props {
@@ -13,15 +14,32 @@ interface Props {
   onPropose: (target: string, type: TreatyType) => void
   onDeclareWar: (target: string, playerControlled: boolean) => void
   onOfferPeace: (target: string) => void
+  onChat: (target: string, text: string) => void
+  onSanctions: (target: string) => void
+  onLiftSanctions: (target: string) => void
 }
 
-export default function CountryPanel({ state, countryId, onClose, onImprove, onPropose, onDeclareWar, onOfferPeace }: Props) {
+const PHRASES: { key: string; ru: string; en: string }[] = [
+  { key: 'phrase_hello', ru: 'Приветствую вас, лидер великой державы!', en: 'Greetings, leader of a great nation!' },
+  { key: 'phrase_ally', ru: 'Наши страны могли бы стать союзниками. Что скажете?', en: 'Our nations could be allies. What say you?' },
+  { key: 'phrase_trade', ru: 'Нам пора расширять торговлю между странами.', en: 'It is time to expand trade between our lands.' },
+  { key: 'phrase_peace', ru: 'Нам нужен мир. Война разоряет обоих.', en: 'We need peace. War ruins us both.' },
+  { key: 'phrase_praise', ru: 'Ваша мудрость известна всему миру.', en: 'Your wisdom is known across the world.' },
+  { key: 'phrase_threat', ru: 'Советую считаться с нашей силой, иначе пожалеете.', en: 'Heed our strength, or you will regret it.' },
+]
+
+export default function CountryPanel({ state, countryId, onClose, onImprove, onPropose, onDeclareWar, onOfferPeace, onChat, onSanctions, onLiftSanctions }: Props) {
   const lang = state.lang
   const [propType, setPropType] = useState<TreatyType>('nap')
   const [warAsk, setWarAsk] = useState<string | null>(null)
   const [manualCmd, setManualCmd] = useState(true)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatText, setChatText] = useState('')
+  const chatEndRef = useRef<HTMLDivElement>(null)
   const p = state.countries[state.playerId]
   const c = countryId ? state.countries[countryId] : null
+  const msgs = c && state.chats ? state.chats[chatKey(state.playerId, c.id)] ?? [] : []
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs.length, chatOpen, countryId])
 
   if (!c || !c.alive) {
     return (
@@ -100,11 +118,47 @@ export default function CountryPanel({ state, countryId, onClose, onImprove, onP
                     {t(lang, 'propose')}
                   </button>
                 </div>
+                {hasTreaty(state, state.playerId, c.id, 'sanctions')
+                  ? <button className="btn" onClick={() => onLiftSanctions(c.id)}>💼 {t(lang, 'lift_sanctions_label')}</button>
+                  : <button className="btn" onClick={() => onSanctions(c.id)}>{t(lang, 'impose_sanctions')}</button>}
                 <button className="btn danger" onClick={() => setWarAsk(c.id)}>⚔️ {t(lang, 'declare_war')}</button>
               </>
             )}
             {war && <button className="btn primary" onClick={() => onOfferPeace(c.id)}>🕊️ {t(lang, 'offer_peace')}</button>}
+            <button className="btn ghost" onClick={() => setChatOpen(o => !o)}>
+              💬 {t(lang, 'chat_title')}{chatOpen ? ' ▾' : ' ▸'}
+            </button>
           </div>
+
+          {chatOpen && (
+            <div className="chat-box">
+              <div className="chat-log">
+                {msgs.length === 0 && <p className="hint">{t(lang, 'chat_hint')}</p>}
+                {msgs.map((m, i) => (
+                  <div key={i} className={'chat-msg' + (m.from === state.playerId ? ' me' : ' them')}>
+                    <span className="chat-who">{state.countries[m.from]?.flag} {monthName(m.month, lang)}</span>
+                    <div>{m.text}</div>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+              <div className="chat-phrases">
+                {PHRASES.map(ph => (
+                  <button key={ph.key} onClick={() => onChat(c.id, lang === 'ru' ? ph.ru : ph.en)}>
+                    {t(lang, ph.key)}
+                  </button>
+                ))}
+              </div>
+              <div className="chat-input-row">
+                <input className="input" value={chatText} placeholder={t(lang, 'chat_hint')}
+                  onChange={e => setChatText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && chatText.trim()) { onChat(c.id, chatText.trim()); setChatText('') } }} />
+                <button className="btn primary sm" disabled={!chatText.trim()} onClick={() => { onChat(c.id, chatText.trim()); setChatText('') }}>
+                  {t(lang, 'chat_send')}
+                </button>
+              </div>
+            </div>
+          )}
 
           {warAsk === c.id && (
             <div className="war-confirm">

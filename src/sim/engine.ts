@@ -1,4 +1,5 @@
-import type { Country, GameState, GameEvent, PlayerOrder, TreatyType, War, Ideology, TechBranch } from './types'
+import type { Country, GameState, GameEvent, PlayerOrder, TreatyType, War, Ideology, TechBranch, Directive } from './types'
+import { genGeneral, generalBonus } from '../data/generals'
 import {
   ADJACENCY, adjMap, regionsOf, power, relOf, hasTreaty, atWarWith, isCoastal, mulberry32, hashCode, PALETTE,
 } from './setup'
@@ -115,8 +116,80 @@ export function applyOrder(state: GameState, o: PlayerOrder, silent = false): bo
       if (!silent) ev(state, 'player', 'ev_build_mil', { country: p.name, n: p.factoriesMil })
       return true
     }
+    case 'set_directive': {
+      const w = state.wars.find(x => x.id === Number(o.target) && !x.over)
+      if (!w || !w.directives) return false
+      const d = o.text as Directive
+      if (!['offensive', 'balanced', 'defensive'].includes(d)) return false
+      w.directives[state.playerId] = d
+      if (!silent) ev(state, 'war', 'ev_directive_set', { dir: d })
+      return true
+    }
+    case 'offensive': {
+      const w = state.wars.find(x => x.id === Number(o.target) && !x.over)
+      if (!w || !w.offensives) return false
+      if (!cost(120)) return false
+      w.offensives[state.playerId] = 3
+      p.warSupport = Math.min(100, p.warSupport + 4)
+      if (!silent) ev(state, 'war', 'ev_offensive', { country: p.name })
+      return true
+    }
+    case 'nuke_program': {
+      if (year < 1935) { if (!silent) ev(state, 'tech', 'ev_tech_era', {}); return false }
+      if ((p.techTree.sci ?? 0) < 2) { if (!silent) ev(state, 'tech', 'ev_nuke_need_sci', {}); return false }
+      if (p.nukeProgress >= 100) { if (!silent) ev(state, 'tech', 'ev_nuke_ready', {}); return false }
+      if (!cost(500)) return false
+      p.nukeProgress = Math.min(100, p.nukeProgress + 20 + (p.techTree.sci ?? 0) * 4)
+      if (p.nukeProgress >= 100) {
+        p.nukes += 1
+        ev(state, 'tech', 'ev_nuke_done', { country: p.name }, true)
+      } else if (!silent) ev(state, 'tech', 'ev_nuke_progress', { country: p.name, pct: Math.round(p.nukeProgress) })
+      return true
+    }
+    case 'nuke_strike': {
+      const target = o.target ? state.countries[o.target] : null
+      if (!target || !target.alive || p.nukes < 1) return false
+      const atWar = state.wars.some(x => !x.over && x.attackers.includes(p.id) !== x.attackers.includes(target.id) && (x.attackers.includes(p.id) || x.defenders.includes(p.id)))
+      if (!atWar) { if (!silent) ev(state, 'war', 'ev_nuke_no_war', {}); return false }
+      p.nukes -= 1
+      state.wars.forEach(w => { if (!w.over) w.nukesUsed = (w.nukesUsed ?? 0) + 1 })
+      target.industry = Math.max(1, target.industry * 0.65)
+      target.divisions = Math.max(0, Math.round(target.divisions * 0.75))
+      target.stability = Math.max(0, target.stability - 25)
+      target.warSupport = Math.max(0, target.warSupport - 20)
+      p.reputation = Math.max(0, p.reputation - 35)
+      p.prestige = Math.max(0, p.prestige - 10)
+      for (const c of Object.values(state.countries)) if (c.alive && c.id !== p.id && c.id !== target.id) changeRel(state, c.id, p.id, -6)
+      ev(state, 'war', 'ev_nuke_strike', { a: p.name, b: target.name }, true)
+      return true
+    }
+    case 'congress_vote': {
+      const cg = state.congress
+      if (!cg || cg.playerVoted) return false
+      cg.votes[state.playerId] = o.text as 'yes' | 'no' | 'abstain'
+      cg.playerVoted = true
+      resolveCongress(state)
+      return true
+    }
   }
   return false
+}
+
+export function imposeSanctions(state: GameState, from: string, target: string): boolean {
+  const cf = state.countries[from], ct = state.countries[target]
+  if (!cf || !ct || !cf.alive || !ct.alive) return false
+  const existing = state.treaties.find(t => t.type === 'sanctions' && t.status === 'active' && t.parties[0] === from && t.parties[1] === target)
+  if (existing) return false
+  state.treaties.push({ id: state.nextId++, type: 'sanctions', parties: [from, target], signedMonth: state.month, status: 'active' })
+  changeRel(state, from, target, -20)
+  ct.reputation = Math.max(0, ct.reputation - 3)
+  ev(state, 'diplomacy', 'ev_sanctions', { a: cf.name, b: ct.name }, true)
+  return true
+}
+
+export function liftSanctions(state: GameState, from: string, target: string): void {
+  const t = state.treaties.find(x => x.type === 'sanctions' && x.status === 'active' && x.parties[0] === from && x.parties[1] === target)
+  if (t) { t.status = 'broken'; t.brokenBy = from; changeRel(state, from, target, 6); ev(state, 'diplomacy', 'ev_sanctions_lifted', { a: state.countries[from]?.name ?? '', b: state.countries[target]?.name ?? '' }) }
 }
 
 // ---------------- diplomacy ----------------
@@ -242,8 +315,11 @@ export function declareWar(state: GameState, attacker: string, defender: string,
   if (!realCb) {
     // no casus belli: world condemns
     ca.reputation = Math.max(0, ca.reputation - 20)
-    ca.stability = Math.max(0, ca.stability - 10)
-    ca.warSupport = Math.max(0, ca.warSupport - 15)
+    ca.stability = Math.max(0, ca.stability - 8)
+    ca.warSupport = Math.max(0, ca.warSupport - 12)
+    for (const c of Object.values(state.countries)) {
+      if (c.alive && c.id !== attacker && c.id !== defender) changeRel(state, c.id, attacker, -3)
+    }
     ev(state, 'war', 'ev_no_cb', { a: ca.name }, true)
   }
   const attackers = [attacker]
@@ -272,7 +348,21 @@ export function declareWar(state: GameState, attacker: string, defender: string,
       }
     }
   }
-  state.wars.push({ id: state.nextId++, attackers, defenders, startedMonth: state.month, occupations: {}, over: false, cb: realCb ?? undefined, playerControlled })
+  const year = Math.floor(state.month / 12)
+  const directives: Record<string, Directive> = {}
+  const generals: War['generals'] = {}
+  for (const id of [...attackers, ...defenders]) {
+    directives[id] = 'balanced'
+    generals[id] = genGeneral(year, rnd)
+  }
+  state.wars.push({
+    id: state.nextId++, attackers, defenders, startedMonth: state.month, occupations: {},
+    over: false, cb: realCb ?? undefined, playerControlled, directives, generals, offensives: {},
+  })
+  for (const id of [...attackers, ...defenders]) {
+    const g = generals[id]
+    if (g) ev(state, 'war', 'ev_general', { country: state.countries[id]?.name ?? id, general: g.name })
+  }
   changeRel(state, attacker, defender, -40)
   ca.warSupport = Math.min(100, ca.warSupport + 25)
   cd.warSupport = Math.min(100, cd.warSupport + 20)
@@ -280,15 +370,43 @@ export function declareWar(state: GameState, attacker: string, defender: string,
 }
 
 // ---------------- wars ----------------
+export function weatherFactor(monthIdx: number, attacking: boolean): number {
+  // winter & spring thaw slow offensives
+  const m = Math.floor(monthIdx) % 12
+  if (m === 11 || m === 0 || m === 1) return attacking ? 0.78 : 1.1
+  if (m === 2 || m === 3) return attacking ? 0.86 : 1.03
+  return 1
+}
+
+export function seasonName(month: number, lang: 'ru' | 'en'): string {
+  const m = Math.floor(month) % 12
+  const s = m === 11 || m <= 1 ? 'winter' : m <= 4 ? 'spring' : m <= 7 ? 'summer' : m <= 9 ? 'autumn' : 'winter'
+  return lang === 'ru'
+    ? { winter: '❄️ Зима', spring: '🌱 Распутица', summer: '☀️ Лето', autumn: '🍂 Осень' }[s]
+    : { winter: '❄️ Winter', spring: '🌱 Thaw', summer: '☀️ Summer', autumn: '🍂 Autumn' }[s]
+}
+
+export function directiveMod(d: Directive | undefined, defending: boolean): number {
+  if (d === 'offensive') return defending ? 0.92 : 1.18
+  if (d === 'defensive') return defending ? 1.2 : 0.9
+  return 1
+}
+
 function warSidesPower(state: GameState, w: War): [number, number] {
+  const monthIdx = Math.floor(state.month) % 12
   const sideP = (ids: string[], defending: boolean) => ids.reduce((s, id) => {
     const c = state.countries[id]
     if (!c || !c.alive) return s
     const mods = techMods(c)
     const equipBonus = c.divisions > 0 ? Math.min(1, c.equipment / c.divisions) * 0.3 : 0
     const supply = supplyFactor(c)
+    const dir = directiveMod(w.directives?.[id], defending)
+    const gen = generalBonus(w.generals?.[id], defending)
+    const weather = weatherFactor(monthIdx, !defending)
+    const offPush = w.offensives?.[id] ? 1.15 : 1
     return s + c.divisions * (1 + c.tech / 8) * (0.55 + c.warSupport / 220) * (0.85 + rnd() * 0.3)
-      * (defending ? 1.18 : 1) * (defending ? mods.armyDefense : mods.armyAttack) * (1 + equipBonus) * supply + c.navy * 2 * mods.navyPower
+      * (defending ? 1.18 : 1) * (defending ? mods.armyDefense : mods.armyAttack)
+      * (1 + equipBonus) * supply * dir * gen * weather * offPush + c.navy * 2 * mods.navyPower
   }, 0)
   return [sideP(w.attackers, false), sideP(w.defenders, true)]
 }
@@ -319,6 +437,47 @@ function candidateTargets(state: GameState, w: War, side: string[]): string[] {
 export function updateWars(state: GameState, dt: number): void {
   for (const w of state.wars) {
     if (w.over) continue
+
+    // AI defense minister: chooses (sometimes poorly) for wars delegated by the player
+    if (w.playerControlled === false) {
+      for (const id of [...w.attackers, ...w.defenders]) {
+        const c = state.countries[id]
+        if (!c?.isPlayer || !w.directives) continue
+        if (rnd() < 0.06 * dt) {
+          const defending = w.defenders.includes(id)
+          const smart: Directive = defending ? 'defensive' : 'offensive'
+          // minister errs ~35% of the time
+          const d = rnd() < 0.65 ? smart : (pick(['offensive', 'balanced', 'defensive'] as Directive[]))
+          if (d !== w.directives[id]) {
+            w.directives[id] = d
+            ev(state, 'war', 'ev_minister_order', { general: w.generals?.[id]?.name ?? '—', dir: d })
+          }
+        }
+      }
+    }
+    // offensive momentum countdown
+    if (w.offensives) for (const k of Object.keys(w.offensives)) {
+      w.offensives[k] -= dt
+      if (w.offensives[k] <= 0) delete w.offensives[k]
+    }
+
+    // partisans in occupied regions
+    for (const [r, occ] of Object.entries(w.occupations)) {
+      const origOwner = state.regionOwner[r]
+      if (!origOwner || origOwner === occ) continue
+      const oc = state.countries[origOwner]
+      if (!oc?.alive) continue
+      if (rnd() < 0.012 * dt * (oc.warSupport / 50)) {
+        delete w.occupations[r]
+        const oc2 = state.countries[occ]
+        if (oc2) {
+          oc2.equipment = Math.max(0, oc2.equipment - 2)
+          oc2.stability = Math.max(0, oc2.stability - 0.5)
+        }
+        ev(state, 'war', 'ev_partisans', { region: r, country: oc.name })
+      }
+    }
+
     const [attP, defP] = warSidesPower(state, w)
     const ratio = attP / Math.max(1, defP)
     const totalP = attP + defP
@@ -336,6 +495,19 @@ export function updateWars(state: GameState, dt: number): void {
             if (state.regionOwner[r] && !w.defenders.includes(state.regionOwner[r])) continue
             w.occupations[r] = occupier
             ev(state, 'war', 'ev_region_occupied', { region: r, by: state.countries[occupier]?.name ?? occupier })
+          }
+        }
+      } else if (rnd() < 0.08 * step) {
+        // no land contact: naval invasion of a coastal enemy region if we rule the sea
+        const attNavy = w.attackers.reduce((s2, i) => s2 + (state.countries[i]?.navy ?? 0), 0)
+        const defNavy = w.defenders.reduce((s2, i) => s2 + (state.countries[i]?.navy ?? 0), 0)
+        if (attNavy > defNavy * 1.2 && attNavy > 2) {
+          const coastalTargets = w.defenders.flatMap(d => regionsOf(state, d)).filter(r => isCoastal(r) && !w.occupations[r])
+          if (coastalTargets.length) {
+            const r = pick(coastalTargets)
+            const occupier = w.attackers.filter(a => state.countries[a]?.alive)[0]
+            w.occupations[r] = occupier
+            ev(state, 'war', 'ev_amphibious', { region: r, by: state.countries[occupier]?.name ?? occupier }, true)
           }
         }
       }
@@ -412,7 +584,8 @@ function checkSurrender(state: GameState, w: War, losers: string[], winners: str
     if (!c || !c.alive) continue
     const origRegions = regionsOf(state, id)
     const occCount = origRegions.filter(r => w.occupations[r]).length
-    const capitulate = c.warSupport < 12 || (origRegions.length > 0 && occCount / origRegions.length > 0.55) || (forced && c.warSupport < 25)
+    const occRatio = origRegions.length > 0 ? occCount / origRegions.length : 0
+    const capitulate = c.warSupport < 12 || (occRatio > 0.55 && c.warSupport < 45) || (forced && c.warSupport < 25)
     if (capitulate) {
       concludePeace(state, w, id, winners, true)
       return
@@ -482,14 +655,16 @@ export function updateEconomy(state: GameState, dt: number): void {
   for (const c of Object.values(state.countries)) {
     if (!c.alive) continue
     const mods = techMods(c)
-    const income = c.industry * c.taxRate
+    const sanN = state.treaties.reduce((n, t) => n + (t.type === 'sanctions' && t.status === 'active' && t.parties[1] === c.id ? 1 : 0), 0)
+    const income = c.industry * c.taxRate * Math.max(0.6, 1 - sanN * 0.08)
     const upkeep = c.divisions * (1.5 + c.tech * 0.35) + c.navy * 1.2 + c.population * 0.05
     const invest = income * c.investRate
     const net = income - upkeep - invest
     c.treasury += net * dt
     if (c.treasury < 0) {
       c.stability = Math.max(0, c.stability - 0.8 * dt)
-      c.divisions = Math.round(c.divisions * (1 - 0.01 * dt))
+      c.divisions = Math.round(c.divisions * (1 - 0.025 * dt))
+      c.equipment = Math.max(0, c.equipment * (1 - 0.02 * dt))
       c.treasury = 0
     }
     c.industry += invest * 0.05 * Math.max(0.2, (13 - c.tech) / 8) * mods.industryGrowth * dt
@@ -639,6 +814,7 @@ function spawnRebel(state: GameState, c: Country, r: string, kind: 'separatist' 
     factoriesCiv: 1, factoriesMil: 0, equipment: 0,
     techTree: { inf: 0, arm: 0, air: 0, nav: 0, ind: 0, sci: 0 },
     science: 0, prestige: 10,
+    nukeProgress: 0, nukes: 0,
     leader: '',
   }
   c.relations[newId] = -60
@@ -679,7 +855,16 @@ export function aiTurns(state: GameState, dt: number): void {
             if (rnd() < 0.75) continue
           }
           const myP = power(c), theirP = power(target)
-          if (theirP > myP * 1.6) continue
+          const relT = c.relations[n] ?? 0
+          // only attack clearly weaker targets — or arch-enemies
+          if (theirP > myP * 0.8 && relT > -60) continue
+          // respect guarantees by stronger powers
+          const guarantor = state.treaties.find(t => t.status === 'active' && t.type === 'guarantee' &&
+            (t.parties[0] === n || t.parties[1] === n))
+          if (guarantor) {
+            const g = guarantor.parties[0] === n ? guarantor.parties[1] : guarantor.parties[0]
+            if (state.countries[g]?.alive && power(state.countries[g]) > myP * 0.8 && rnd() < 0.8) continue
+          }
           const rel = c.relations[n] ?? 0
           const greed = (c.personality === 'expansionist' ? 38 : c.personality === 'militarist' ? 32 : c.personality === 'zealot' ? 26 : 22)
           const score = greed + (myP / Math.max(1, theirP)) * 26 + (rel < -40 ? 18 : rel < -10 ? 8 : 0) + (target.stability < 30 ? 12 : 0)
@@ -761,6 +946,97 @@ export function checkVictory(state: GameState): void {
 }
 
 // ---------------- advance (fractional months: weeks supported) ----------------
+// ---------------- world congress ----------------
+export function startCongress(state: GameState): void {
+  const alive = Object.values(state.countries).filter(c => c.alive)
+  if (alive.length < 3) return
+  const proposer = alive.filter(c => !c.isPlayer).sort((a, b) => b.prestige - a.prestige)[0] ?? alive[0]
+  const wars = state.wars.filter(w => !w.over)
+  const rogue = alive.filter(c => c.reputation < 35).sort((a, b) => a.reputation - b.reputation)[0]
+  let resolution = 'cong_freetrade', target: string | undefined
+  if (wars.length && rnd() < 0.5) {
+    resolution = 'cong_peace'
+    target = wars[0].attackers[0]
+  } else if (rogue) {
+    resolution = 'cong_condemn'
+    target = rogue.id
+  }
+  const votes: Record<string, 'yes' | 'no' | 'abstain'> = {}
+  for (const c of alive) {
+    if (c.isPlayer) continue
+    if (c.id === proposer.id) { votes[c.id] = 'yes'; continue }
+    let score = (relOf(state, c.id, proposer.id) ?? 0) / 10 + c.reputation / 25 - 4
+    if (resolution === 'cong_condemn' && target) {
+      if (c.id === target) score = -50
+      else score += (35 - state.countries[target].reputation) / 8
+    }
+    if (resolution === 'cong_peace' && target) {
+      const w = wars[0]
+      if (w.attackers.includes(c.id)) score = -40
+      if (w.defenders.includes(c.id)) score = 40
+    }
+    votes[c.id] = score > 2 ? 'yes' : score < -2 ? 'no' : 'abstain'
+  }
+  state.congress = { month: state.month, resolution, target, proposedBy: proposer.id, votes }
+  ev(state, 'diplomacy', 'ev_congress_open', { country: proposer.name }, true)
+}
+
+export function resolveCongress(state: GameState): void {
+  const cg = state.congress
+  if (!cg) return
+  let yes = 0, no = 0
+  for (const [id, v] of Object.entries(cg.votes)) {
+    const w = Math.sqrt(power(state.countries[id] ?? { industry: 0, population: 0, divisions: 0, navy: 0, tech: 0 } as never))
+    if (v === 'yes') yes += w
+    else if (v === 'no') no += w
+  }
+  cg.passed = yes > no
+  if (cg.passed) {
+    if (cg.resolution === 'cong_condemn' && cg.target) {
+      const t = state.countries[cg.target]
+      if (t) { t.reputation = Math.max(0, t.reputation - 15); t.prestige = Math.max(0, t.prestige - 8) }
+    } else if (cg.resolution === 'cong_peace') {
+      for (const w of state.wars) if (!w.over) {
+        for (const id of [...w.attackers, ...w.defenders]) {
+          const c = state.countries[id]
+          if (c) c.warSupport = Math.max(0, c.warSupport - 12)
+        }
+      }
+    } else {
+      for (const c of Object.values(state.countries)) if (c.alive) c.prestige = Math.min(100, c.prestige + 2)
+    }
+  }
+  ev(state, 'diplomacy', cg.passed ? 'ev_congress_pass' : 'ev_congress_fail',
+    { res: cg.resolution, country: state.countries[cg.proposedBy]?.name ?? '' }, true)
+  state.congress = undefined
+}
+
+// ---------------- achievements ----------------
+const ACH_DEFS: { id: string; check: (s: GameState) => boolean }[] = [
+  { id: 'ach_first_conquest', check: s => { const h0 = s.history[0]; return !!h0 && regionsOf(s, s.playerId).length > h0.regions } },
+  { id: 'ach_nuclear', check: s => (s.countries[s.playerId]?.nukes ?? 0) >= 1 || (s.wars.some(w => (w.nukesUsed ?? 0) > 0 && w.attackers[0] === s.playerId)) },
+  { id: 'ach_diplomat', check: s => s.treaties.filter(t => t.status === 'active' && t.parties.includes(s.playerId) && t.type !== 'sanctions').length >= 5 },
+  { id: 'ach_tycoon', check: s => { const h0 = s.history[0]; const p = s.countries[s.playerId]; return !!h0 && !!p && p.industry >= h0.industry * 3 } },
+  { id: 'ach_survivor', check: s => s.monthCount - 0 >= 600 },
+  { id: 'ach_general_staff', check: s => s.wars.some(w => !w.over && w.playerControlled && (w.attackers.includes(s.playerId) || w.defenders.includes(s.playerId))) },
+  { id: 'ach_minister', check: s => s.wars.some(w => !w.over && w.playerControlled === false && (w.attackers.includes(s.playerId) || w.defenders.includes(s.playerId))) },
+  { id: 'ach_sanctions', check: s => s.treaties.some(t => t.type === 'sanctions' && t.status === 'active' && t.parties[0] === s.playerId) },
+  { id: 'ach_victory', check: s => !!s.victory && s.victory.winner === s.playerId },
+  { id: 'ach_century', check: s => s.monthCount >= 1200 },
+]
+
+export const ACH_IDS = ACH_DEFS.map(a => a.id)
+
+export function checkAchievements(state: GameState): void {
+  if (!state.achievements) state.achievements = []
+  for (const a of ACH_DEFS) {
+    if (!state.achievements.includes(a.id) && a.check(state)) {
+      state.achievements.push(a.id)
+      ev(state, 'world', 'ev_achievement', { ach: a.id }, true)
+    }
+  }
+}
+
 export function advanceMonths(state: GameState, months: number): GameState {
   let remaining = months
   while (remaining > 0.001 && !state.gameOver) {
@@ -778,11 +1054,19 @@ export function advanceMonths(state: GameState, months: number): GameState {
         ev(state, 'diplomacy', 'ev_treaty_expired', { a: state.countries[t.parties[0]]?.name ?? '', b: state.countries[t.parties[1]]?.name ?? '', type: t.type })
       }
     }
-    // yearly history + victory check
+    // congress every ~5 years; timeout if player never votes
+    if (!state.congress && Math.floor(state.monthCount / 60) !== Math.floor((state.monthCount - dt) / 60)) startCongress(state)
+    if (state.congress && !state.congress.playerVoted && state.month > state.congress.month + 3) {
+      state.congress.votes[state.playerId] = 'abstain'
+      state.congress.playerVoted = true
+      resolveCongress(state)
+    }
+    // yearly history + victory check + achievements
     if (Math.floor(state.month) !== Math.floor(state.month - dt)) {
       const p = state.countries[state.playerId]
       if (p) state.history.push({ month: state.month, industry: Math.round(p.industry), population: +p.population.toFixed(1), regions: regionsOf(state, p.id).length })
       checkVictory(state)
+      checkAchievements(state)
     }
     const p = state.countries[state.playerId]
     if (p && p.alive && regionsOf(state, state.playerId).length === 0) {

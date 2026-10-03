@@ -142,7 +142,7 @@ export function createGame(opts: SetupOptions): GameState {
     industry = Math.max(industry, 5)
 
     const tech = Math.min(12, techBase + (DEV[regions[0]] ? 0.6 : -0.4) + seed() * 0.4)
-    const divisions = Math.max(1, Math.round(population * milF * (0.5 + tech / 12) * (personality === 'militarist' ? 1.3 : 1)))
+    const divisions = Math.max(1, Math.round(population * milF * 0.65 * (0.5 + tech / 12) * (personality === 'militarist' ? 1.3 : 1)))
     const navy = coastal ? Math.round(industry / 60) + 1 : 0
 
     const ideology = ideologyFromGov(government)
@@ -176,6 +176,8 @@ export function createGame(opts: SetupOptions): GameState {
       },
       science: 0,
       prestige: 40 + Math.round(seed() * 30),
+      nukeProgress: 0,
+      nukes: 0,
     }
   }
 

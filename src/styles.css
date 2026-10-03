@@ -400,3 +400,53 @@ body.parchment .tutorial-card b { color: #8a6508; }
 .sp-leader { color: var(--gold); font-size: 12px; }
 .victory-toggle { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-size: 13px; color: var(--dim); cursor: pointer; }
 .victory-toggle input { margin-top: 2px; }
+
+/* ================= stage B: wars panel ================= */
+.wars-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.war-card { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+.war-card.mine { border-color: var(--gold2); }
+.war-sides { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.war-vs { color: var(--red); }
+.war-progress-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; font-size: 12px; }
+.war-bar { flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+.war-bar div { height: 100%; background: linear-gradient(90deg, var(--green), #7fd8a4); }
+.war-dirs { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; font-size: 12px; }
+.war-dirs > button:not(.btn) { padding: 4px 9px; border-radius: 5px; border: 1px solid var(--line); background: var(--bg3); color: var(--text); cursor: pointer; }
+.war-dirs > button:not(.btn).active { background: var(--gold2); color: #241c05; border-color: var(--gold); font-weight: 700; }
+.war-btns { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+
+/* ================= chat ================= */
+.chat-box { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); }
+.chat-log { max-height: 190px; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.chat-msg { padding: 6px 9px; border-radius: 8px; font-size: 12.5px; line-height: 1.4; max-width: 92%; }
+.chat-msg.me { background: rgba(79,143,221,.16); border: 1px solid rgba(79,143,221,.35); align-self: flex-end; }
+.chat-msg.them { background: var(--bg3); border: 1px solid var(--line); align-self: flex-start; }
+.chat-who { display: block; font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+.chat-phrases { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--line); }
+.chat-phrases button { font-size: 11px; padding: 3px 7px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg3); color: var(--text); cursor: pointer; }
+.chat-phrases button:hover { border-color: var(--gold2); }
+.chat-input-row { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--line); }
+.chat-input-row .input { flex: 1; padding: 5px 8px; }
+
+/* ================= congress ================= */
+.congress-modal { max-width: 430px; text-align: center; }
+.cong-res { font-family: var(--serif); font-size: 16px; margin: 12px 0; padding: 10px; border: 1px dashed var(--gold2); border-radius: 8px; }
+
+/* ================= graphs & achievements ================= */
+.graphs-panel { display: flex; gap: 14px; padding: 12px; flex-wrap: wrap; overflow-y: auto; }
+.graph-box { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.graph-box b { font-size: 12px; display: block; margin-bottom: 4px; }
+.graph-box svg { display: block; background: var(--bg); border-radius: 4px; }
+.ach-modal .ach-list { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; max-height: 320px; overflow-y: auto; }
+.ach-row { padding: 6px 10px; border-radius: 6px; background: var(--bg2); border: 1px solid var(--line); font-size: 13px; opacity: 0.55; }
+.ach-row.got { opacity: 1; border-color: var(--gold2); background: rgba(240,199,94,.1); }
+
+/* ================= scenario editor ================= */
+.sc-sliders label { display: block; margin: 7px 0; font-size: 12.5px; }
+.sc-sliders input[type=range] { width: 100%; }
+.sc-save-row { display: flex; gap: 8px; margin: 10px 0; }
+.sc-save-row .input { flex: 1; }
+.sc-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.sc-pending { margin-top: 8px; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.sc-pending label { font-size: 12.5px; flex: 1; }
+.nuke-row { padding: 2px 0; }

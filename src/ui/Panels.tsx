@@ -211,6 +211,13 @@ export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }
         <span>⛓ {Math.round(p.stockpile.steel)}</span>
         <span>💎 {Math.round(p.stockpile.rare)}</span>
         <span title={t(lang, 'equipment')}>🔧 {Math.round(p.equipment)}</span>
+        <span title={t(lang, 'nukes_ready')}>☢️ {p.nukes}</span>
+      </div>
+      <div className="nuke-row">
+        <button className="btn sm" disabled={p.treasury < 500 || p.nukeProgress >= 100}
+          onClick={() => onOrder({ type: 'nuke_program' })} title={t(lang, 'nuke_program_hint')}>
+          {t(lang, 'nuke_program')} {p.nukeProgress > 0 ? `(${Math.round(p.nukeProgress)}%)` : ''}
+        </button>
       </div>
       <div className="sliders">
         <label>{t(lang, 'tax_rate')}: <b>{Math.round(p.taxRate * 100)}%</b>
@@ -314,3 +321,123 @@ export function AdvisorPanel({ state }: { state: GameState }) {
 }
 
 export type { TechBranch }
+
+// ---------------- Wars HQ ----------------
+import type { War, Directive } from '../sim/types'
+import { regionsOf as regionsOfS } from '../sim/setup'
+
+export function WarsPanel({ state, onOrder, onOfferPeace, onNuke }: {
+  state: GameState
+  onOrder: (o: PlayerOrder) => void
+  onOfferPeace: (target: string) => void
+  onNuke: (target: string) => void
+}) {
+  const lang = state.lang
+  const p = state.countries[state.playerId]
+  const active = state.wars.filter(w => !w.over)
+  const myWars = active.filter(w => w.attackers.includes(state.playerId) || w.defenders.includes(state.playerId))
+  const otherWars = active.filter(w => !w.attackers.includes(state.playerId) && !w.defenders.includes(state.playerId))
+  if (!p) return null
+
+  const renderWar = (w: War, mine: boolean) => {
+    const enemies = mine ? (w.attackers.includes(state.playerId) ? w.defenders : w.attackers) : []
+    const mySide = w.attackers.includes(state.playerId) ? w.attackers : w.defenders
+    const totalEnemyRegions = enemies.reduce((n, e) => n + regionsOfS(state, e).length, 0)
+    const occByUs = Object.entries(w.occupations).filter(([, o]) => mySide.includes(o)).length
+    const occByThem = Object.entries(w.occupations).filter(([, o]) => enemies.includes(o)).length
+    const progress = totalEnemyRegions > 0 ? Math.min(1, occByUs / Math.max(1, Math.round(totalEnemyRegions * 0.6))) : 0
+    const dir = w.directives?.[state.playerId] ?? 'balanced'
+    const gen = w.generals?.[state.playerId]
+    const monthIdx = Math.floor(state.month) % 12
+    const winter = monthIdx === 11 || monthIdx <= 1
+    return (
+      <div key={w.id} className={'war-card' + (mine ? ' mine' : '')}>
+        <div className="war-sides">
+          <span>{w.attackers.map(i => state.countries[i]?.flag + ' ' + state.countries[i]?.name).join(', ')}</span>
+          <b className="war-vs">⚔️</b>
+          <span>{w.defenders.map(i => state.countries[i]?.flag + ' ' + state.countries[i]?.name).join(', ')}</span>
+        </div>
+        {w.cb && <div className="hint">{t(lang, 'cb_label')}: {t(lang, 'cb_' + w.cb)}</div>}
+        {mine && (
+          <>
+            <div className="war-progress-row">
+              <span>{t(lang, 'occupied_regions')}: 🟢 {occByUs} / 🔴 {occByThem}</span>
+              <div className="war-bar"><div style={{ width: Math.round(progress * 100) + '%' }} /></div>
+            </div>
+            {gen && <div className="hint">🎖 {t(lang, 'general_label')}: {gen.name} ({lang === 'ru' ? 'ур.' : 'lvl'} {gen.skill})</div>}
+            {winter && <div className="hint">❄️ {lang === 'ru' ? 'Зима затрудняет наступление' : 'Winter slows offensives'}</div>}
+            {w.playerControlled ? (
+              <div className="war-dirs">
+                <span>{t(lang, 'directive')}:</span>
+                {(['offensive', 'balanced', 'defensive'] as Directive[]).map(d => (
+                  <button key={d} className={dir === d ? 'active' : ''} onClick={() => onOrder({ type: 'set_directive', target: String(w.id), text: d })}>
+                    {t(lang, 'dir_' + d)}
+                  </button>
+                ))}
+                <button
+                  className="btn sm primary"
+                  disabled={p.treasury < 120 || !!w.offensives?.[state.playerId]}
+                  onClick={() => onOrder({ type: 'offensive', target: String(w.id) })}
+                >
+                  {w.offensives?.[state.playerId] ? t(lang, 'offensive_active') : t(lang, 'launch_offensive')}
+                </button>
+              </div>
+            ) : (
+              <div className="hint">🎖 {t(lang, 'minister_mode')} — {gen?.name ?? '—'}</div>
+            )}
+            <div className="war-btns">
+              {enemies.length > 0 && <button className="btn sm" onClick={() => onOfferPeace(enemies[0])}>🕊️ {t(lang, 'offer_peace')}</button>}
+              {p.nukes > 0 && enemies.map(e => (
+                <button key={e} className="btn sm danger" onClick={() => onNuke(e)}>
+                  ☢️ {t(lang, 'nuke_strike_label')} → {state.countries[e]?.flag}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="panel wars-panel">
+      {myWars.map(w => renderWar(w, true))}
+      {otherWars.length > 0 && <h4 className="hint">{lang === 'ru' ? 'Чужие войны' : 'Foreign wars'}</h4>}
+      {otherWars.map(w => renderWar(w, false))}
+      {active.length === 0 && <p className="hint">{lang === 'ru' ? 'В мире тихо... пока.' : 'The world is quiet... for now.'}</p>}
+    </div>
+  )
+}
+
+// ---------------- Graphs ----------------
+function Sparkline({ data, color, label }: { data: number[]; color: string; label: string }) {
+  if (data.length < 2) return <div className="graph-box"><b>{label}</b><p className="hint">…</p></div>
+  const w = 260, h = 70
+  const min = Math.min(...data), max = Math.max(...data)
+  const span = max - min || 1
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - 6 - ((v - min) / span) * (h - 12)}`).join(' ')
+  return (
+    <div className="graph-box">
+      <b>{label}</b>
+      <svg width={w} height={h}>
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="2" />
+      </svg>
+      <span className="hint">{min.toFixed(0)} → {data[data.length - 1].toFixed(0)}</span>
+    </div>
+  )
+}
+
+export function GraphsPanel({ state }: { state: GameState }) {
+  const lang = state.lang
+  const h = state.history
+  const ind = h.map(x => x.industry)
+  const pop = h.map(x => x.population)
+  const reg = h.map(x => x.regions)
+  return (
+    <div className="panel graphs-panel">
+      <Sparkline data={ind} color="#f0c75e" label={'🏭 ' + t(lang, 'graph_industry')} />
+      <Sparkline data={pop} color="#4ec27a" label={'👥 ' + t(lang, 'graph_population')} />
+      <Sparkline data={reg} color="#4f8fdd" label={'🗺 ' + t(lang, 'graph_regions')} />
+    </div>
+  )
+}

@@ -4,7 +4,8 @@ import { monthName, fmtNum } from '../sim/types'
 import { t } from '../i18n'
 import MapView from './MapView'
 import CountryPanel from './CountryPanel'
-import { EventsPanel, TreatiesPanel, ActionsPanel, AdvisorPanel, TechPanel, NewspaperPanel } from './Panels'
+import { EventsPanel, TreatiesPanel, ActionsPanel, AdvisorPanel, TechPanel, NewspaperPanel, WarsPanel, GraphsPanel } from './Panels'
+import { seasonName, ACH_IDS } from '../sim/engine'
 
 export interface Toast { id: number; text: string; kind: 'ok' | 'bad' | 'info' }
 
@@ -30,9 +31,13 @@ interface Props {
   onToggleTheme: () => void
   onToggleMute: () => void
   onTutNext: () => void
+  onNuke: (target: string) => void
+  onChat: (target: string, text: string) => void
+  onSanctions: (target: string) => void
+  onLiftSanctions: (target: string) => void
 }
 
-type Tab = 'events' | 'actions' | 'treaties' | 'advisor' | 'tech' | 'news'
+type Tab = 'events' | 'actions' | 'treaties' | 'advisor' | 'tech' | 'news' | 'wars' | 'graphs'
 
 const SPEEDS = [
   { label: 'x1', ms: 4000 },
@@ -45,6 +50,7 @@ export default function Game(props: Props) {
   const lang = state.lang
   const [tab, setTab] = useState<Tab>('actions')
   const [timeOpen, setTimeOpen] = useState(false)
+  const [showAch, setShowAch] = useState(false)
   const [autoSpeed, setAutoSpeed] = useState(-1) // index into SPEEDS, -1 = off
   const autoRef = useRef(autoSpeed)
   autoRef.current = autoSpeed
@@ -77,7 +83,7 @@ export default function Game(props: Props) {
           <button className="btn ghost sm" onClick={props.onMenu}>☰</button>
           <span className="tb-flag">{p.flag}</span>
           <span className="tb-name">{p.name}</span>
-          <span className="tb-date">📅 {monthName(state.month, lang)}</span>
+          <span className="tb-date">📅 {monthName(state.month, lang)} · {seasonName(state.month, lang)}</span>
         </div>
         <div className="tb-stats">
           <span title={t(lang, 'treasury')}>💰 {fmtNum(p.treasury)} <em className={income >= 0 ? 'pos' : 'neg'}>({income >= 0 ? '+' : ''}{Math.round(income)}/м)</em></span>
@@ -117,6 +123,7 @@ export default function Game(props: Props) {
           <button className="btn ghost sm" title={t(lang, state.theme === 'dark' ? 'theme_parchment' : 'theme_dark')} onClick={props.onToggleTheme}>
             {state.theme === 'dark' ? '📜' : '🌙'}
           </button>
+          <button className="btn ghost sm" title={t(lang, 'achievements')} onClick={() => setShowAch(true)}>🏅</button>
           <button className="btn ghost sm" title={t(lang, 'save')} onClick={props.onSave}>💾</button>
           <button className="btn ghost sm" title={t(lang, 'load')} onClick={props.onLoad}>📂</button>
           <button className="btn ghost sm" title={t(lang, 'settings')} onClick={props.onSettings}>⚙️</button>
@@ -133,23 +140,28 @@ export default function Game(props: Props) {
           onPropose={props.onPropose}
           onDeclareWar={props.onDeclareWar}
           onOfferPeace={props.onOfferPeace}
+          onChat={props.onChat}
+          onSanctions={props.onSanctions}
+          onLiftSanctions={props.onLiftSanctions}
         />
       </div>
 
       <div className="bottom-bar">
         <div className="tabs">
-          {(['actions', 'events', 'news', 'treaties', 'tech', 'advisor'] as Tab[]).map(tb => (
+          {(['actions', 'wars', 'events', 'news', 'treaties', 'tech', 'graphs', 'advisor'] as Tab[]).map(tb => (
             <button key={tb} className={tab === tb ? 'active' : ''} onClick={() => setTab(tb)}>
-              {tb === 'actions' ? '⚡' : tb === 'events' ? '📜' : tb === 'news' ? '🗞' : tb === 'treaties' ? '🤝' : tb === 'tech' ? '🔬' : '🧠'}
-              {' '}{t(lang, tb === 'actions' ? 'actions' : tb === 'events' ? 'events' : tb === 'news' ? 'newspaper' : tb === 'treaties' ? 'treaties' : tb === 'tech' ? 'tech_tree' : 'advisor')}
+              {{ actions: '⚡', wars: '⚔️', events: '📜', news: '🗞', treaties: '🤝', tech: '🔬', graphs: '📈', advisor: '🧠' }[tb]}
+              {' '}{t(lang, { actions: 'actions', wars: 'wars', events: 'events', news: 'newspaper', treaties: 'treaties', tech: 'tech_tree', graphs: 'graphs', advisor: 'advisor' }[tb])}
             </button>
           ))}
         </div>
         <div className="tab-body">
           {tab === 'events' && <EventsPanel state={state} />}
           {tab === 'news' && <NewspaperPanel state={state} />}
+          {tab === 'wars' && <WarsPanel state={state} onOrder={props.onOrder} onOfferPeace={props.onOfferPeace} onNuke={props.onNuke} />}
           {tab === 'treaties' && <TreatiesPanel state={state} onBreak={props.onBreakTreaty} />}
           {tab === 'tech' && <TechPanel state={state} onOrder={props.onOrder} />}
+          {tab === 'graphs' && <GraphsPanel state={state} />}
           {tab === 'actions' && <ActionsPanel state={state} onOrder={props.onOrder} onSetRate={props.onSetRate} onDecree={props.onDecree} decreeBusy={props.decreeBusy} />}
           {tab === 'advisor' && <AdvisorPanel state={state} />}
         </div>
@@ -158,6 +170,41 @@ export default function Game(props: Props) {
       <div className="toasts">
         {props.toasts.map(x => <div key={x.id} className={'toast ' + x.kind}>{x.text}</div>)}
       </div>
+
+      {showAch && (
+        <div className="overlay" onClick={() => setShowAch(false)}>
+          <div className="modal ach-modal" onClick={e => e.stopPropagation()}>
+            <h2>🏅 {t(lang, 'achievements')}</h2>
+            <div className="ach-list">
+              {ACH_IDS.map(id => {
+                const got = state.achievements?.includes(id)
+                return <div key={id} className={'ach-row' + (got ? ' got' : '')}>{got ? '🏅' : '🔒'} {t(lang, id)}</div>
+              })}
+            </div>
+            <button className="btn ghost" onClick={() => setShowAch(false)}>{t(lang, 'back')}</button>
+          </div>
+        </div>
+      )}
+
+      {state.congress && !state.congress.playerVoted && !state.gameOver && (
+        <div className="overlay">
+          <div className="modal congress-modal">
+            <h2>{t(lang, 'congress_title')}</h2>
+            <p>
+              <b>{t(lang, 'congress_by')}:</b> {state.countries[state.congress.proposedBy]?.flag} {state.countries[state.congress.proposedBy]?.name}
+            </p>
+            <p className="cong-res">
+              📜 {t(lang, state.congress.resolution)}
+              {state.congress.target ? ` — ${state.countries[state.congress.target]?.flag} ${state.countries[state.congress.target]?.name}` : ''}
+            </p>
+            <div className="modal-btns">
+              <button className="btn primary" onClick={() => props.onOrder({ type: 'congress_vote', text: 'yes' })}>👍 {t(lang, 'vote_yes')}</button>
+              <button className="btn danger" onClick={() => props.onOrder({ type: 'congress_vote', text: 'no' })}>👎 {t(lang, 'vote_no')}</button>
+              <button className="btn ghost" onClick={() => props.onOrder({ type: 'congress_vote', text: 'abstain' })}>{t(lang, 'vote_abstain')}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {tutKey && !state.gameOver && !state.victory && (
         <div className="tutorial-overlay">
