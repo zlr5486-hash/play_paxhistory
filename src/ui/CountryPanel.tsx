@@ -110,7 +110,7 @@ export default function CountryPanel({ state, countryId, onClose, onImprove, onP
                 </button>
                 <div className="prop-row">
                   <select value={propType} onChange={e => setPropType(e.target.value as TreatyType)}>
-                    {(['nap', 'trade', 'alliance', 'guarantee'] as TreatyType[]).map(tt => (
+                    {(['nap', 'trade', 'alliance', 'guarantee', 'vassal'] as TreatyType[]).map(tt => (
                       <option key={tt} value={tt}>{t(lang, TREATY_KEYS[tt])}</option>
                     ))}
                   </select>

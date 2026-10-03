@@ -275,9 +275,15 @@ export function AdvisorPanel({ state }: { state: GameState }) {
     else econ.push('adv_econ_surplus')
     if (p.stability < 30) econ.push('adv_low_stab')
     if (p.stockpile.grain <= 5) econ.push('adv_grain_low')
+    const year = Math.floor(state.month / 12)
+    if (year >= 1935 && (p.techTree.sci ?? 0) >= 2 && p.nukeProgress < 100) econ.push('adv_nuke')
     const diplo: string[] = []
     const worst = threats[0]
     if (worst) diplo.push('adv_treaty_suggest')
+    const atWarNow = state.wars.some(w => !w.over && (w.attackers.includes(p.id) || w.defenders.includes(p.id)))
+    if (atWarNow && p.warSupport < 30) diplo.push('adv_seek_peace')
+    const sanctioned = state.treaties.some(t => t.type === 'sanctions' && t.status === 'active' && t.parties[0] === p.id)
+    if (!sanctioned && worst && worst.rel < -30) diplo.push('adv_sanction')
     return { threats, opps, econ, diplo, worst, surplus: Math.round(income - upkeep) } as never
   }, [state, p]) as {
     threats: { id: string; name: string; ratio: string; rel: number }[]
@@ -307,7 +313,7 @@ export function AdvisorPanel({ state }: { state: GameState }) {
       <div className="adv-col">
         <h4>🏦 {t(lang, 'adv_economy')}</h4>
         {advice.econ.map(k => (
-          <div key={k} className="adv-line">{k === 'adv_econ_deficit' ? '📉 ' : k === 'adv_econ_surplus' ? '📈 ' : k === 'adv_grain_low' ? '🌾 ' : '🚨 '}
+          <div key={k} className="adv-line">{k === 'adv_econ_deficit' ? '📉 ' : k === 'adv_econ_surplus' ? '📈 ' : k === 'adv_grain_low' ? '🌾 ' : k === 'adv_nuke' ? '☢️ ' : '🚨 '}
             {t(lang, k, { n: Math.max(0, advice.surplus ?? 0) })}</div>
         ))}
         <h4>🤝 {t(lang, 'adv_diplo')}</h4>

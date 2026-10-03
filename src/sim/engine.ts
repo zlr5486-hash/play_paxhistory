@@ -325,7 +325,7 @@ export function declareWar(state: GameState, attacker: string, defender: string,
   const attackers = [attacker]
   const defenders = [defender]
   for (const t of state.treaties) {
-    if (t.status !== 'active' || t.type !== 'alliance') continue
+    if (t.status !== 'active' || (t.type !== 'alliance' && t.type !== 'vassal')) continue
     const allyOfDef = t.parties[0] === defender ? t.parties[1] : t.parties[1] === defender ? t.parties[0] : null
     if (allyOfDef && !attackers.includes(allyOfDef) && !defenders.includes(allyOfDef) && state.countries[allyOfDef]?.alive) {
       if (rnd() < 0.5 + state.countries[allyOfDef].reputation / 200) {
@@ -723,6 +723,16 @@ export function updateEconomy(state: GameState, dt: number): void {
     // civilian factories boost industry income slightly
     c.industry += c.factoriesCiv * 0.3 * dt
   }
+  // vassal tribute flows to the suzerain
+  for (const t of state.treaties) {
+    if (t.status !== 'active' || t.type !== 'vassal') continue
+    const suzerain = state.countries[t.parties[0]], vassal = state.countries[t.parties[1]]
+    if (suzerain?.alive && vassal?.alive && vassal.treasury > 50) {
+      const tribute = Math.min(vassal.treasury * 0.5, vassal.industry * vassal.taxRate * 0.05 * dt)
+      vassal.treasury -= tribute
+      suzerain.treasury += tribute
+    }
+  }
 }
 
 // ---------------- politics: revolutions & separatism ----------------
@@ -825,8 +835,19 @@ function spawnRebel(state: GameState, c: Country, r: string, kind: 'separatist' 
 
 // ---------------- AI ----------------
 export function aiTurns(state: GameState, dt: number): void {
+  const yearNow = Math.floor(state.month / 12)
   for (const c of Object.values(state.countries)) {
     if (c.isPlayer || !c.alive) continue
+    // nuclear arms race: great powers develop the bomb after 1945
+    if (yearNow >= 1945 && c.nukes < 3 && c.treasury > 800 && rnd() < 0.03 * dt) {
+      c.nukeProgress += 4 + (c.techTree.sci ?? 0)
+      c.treasury -= 40 * dt
+      if (c.nukeProgress >= 100) {
+        c.nukeProgress = 0
+        c.nukes += 1
+        ev(state, 'tech', 'ev_nuke_done', { country: c.name }, true)
+      }
+    }
     if (state.month - c.lastAiActionMonth < 1) continue
     const rng = mulberry32(hashCode(c.id + Math.floor(state.month * 4)))
     const activity = { expansionist: 0.45, militarist: 0.4, opportunist: 0.4, diplomat: 0.35, merchant: 0.3, cautious: 0.2, isolationist: 0.12, zealot: 0.35 }[c.personality] ?? 0.3
@@ -858,8 +879,8 @@ export function aiTurns(state: GameState, dt: number): void {
           const relT = c.relations[n] ?? 0
           // only attack clearly weaker targets — or arch-enemies
           if (theirP > myP * 0.8 && relT > -60) continue
-          // respect guarantees by stronger powers
-          const guarantor = state.treaties.find(t => t.status === 'active' && t.type === 'guarantee' &&
+          // respect guarantees & suzerains of stronger powers
+          const guarantor = state.treaties.find(t => t.status === 'active' && (t.type === 'guarantee' || t.type === 'vassal') &&
             (t.parties[0] === n || t.parties[1] === n))
           if (guarantor) {
             const g = guarantor.parties[0] === n ? guarantor.parties[1] : guarantor.parties[0]
