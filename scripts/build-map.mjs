@@ -78,16 +78,67 @@ const EXCLUDE = new Set(['010', '260']) // Antarctica, Fr. S. Antarctic Lands
 
 function round2(x) { return Math.round(x * 100) / 100 }
 
+// Split rings that cross the antimeridian (|dx| > 180) into closed rings
+function splitRing(ring) {
+  const jumps = []
+  for (let i = 0; i < ring.length - 1; i++) {
+    if (Math.abs(ring[i + 1][0] - ring[i][0]) > 180) jumps.push(i)
+  }
+  if (!jumps.length) return [ring]
+  const chains = []
+  let cur = [ring[0]]
+  for (let i = 0; i < ring.length - 1; i++) {
+    const p1 = ring[i], p2 = ring[i + 1]
+    cur.push(p2)
+    if (Math.abs(p2[0] - p1[0]) > 180) {
+      const x1 = p1[0], x2 = p2[0] < 0 ? p2[0] + 360 : p2[0]
+      const t = (180 - x1) / (x2 - x1)
+      const yC = round2(p1[1] + t * (p2[1] - p1[1]))
+      const s1 = p1[0] > 0 ? 180 : -180
+      const s2 = p2[0] > 0 ? 180 : -180
+      cur[cur.length - 1] = [s1, yC]
+      chains.push(cur)
+      cur = [[s2, yC]]
+    }
+  }
+  // close the cycle: tail joins head
+  const merged = cur.concat(chains[0])
+  const out = [merged, ...chains.slice(1)]
+  return out.map(r => {
+    const c = r.slice()
+    if (c[0][0] !== c[c.length - 1][0] || c[0][1] !== c[c.length - 1][1]) c.push(c[0])
+    return c
+  })
+}
+
+function ringArea(ring) {
+  let a = 0
+  for (let i = 0; i < ring.length - 1; i++) a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1]
+  return Math.abs(a / 2)
+}
+
 const features = []
+const antarcticaRings = []
 for (const f of fc.features) {
   const numId = f.id ? String(f.id) : undefined
   const id = numId && FINAL[numId] !== undefined ? FINAL[numId] : NAME2ISO3[f.properties.name]
+  if (numId === '010') {
+    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates
+    for (const poly of polys) antarcticaRings.push(poly.map(r => r.map(([x, y]) => [round2(x), round2(y)])))
+    continue
+  }
   if (!id || EXCLUDE.has(numId || '')) continue
-  const geom = JSON.parse(JSON.stringify(f.geometry))
-  const fixRing = (ring) => ring.map(([x, y]) => [round2(x), round2(y)])
-  if (geom.type === 'Polygon') geom.coordinates = geom.coordinates.map(fixRing)
-  else if (geom.type === 'MultiPolygon') geom.coordinates = geom.coordinates.map(p => p.map(fixRing))
-  features.push({ type: 'Feature', id, properties: { name: f.properties.name }, geometry: geom })
+  const srcPolys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates
+  const newPolys = []
+  for (const poly of srcPolys) {
+    const outer = poly[0].map(([x, y]) => [round2(x), round2(y)])
+    const parts = splitRing(outer)
+    for (const part of parts) newPolys.push([part])
+  }
+  features.push({
+    type: 'Feature', id, properties: { name: f.properties.name },
+    geometry: newPolys.length === 1 ? { type: 'Polygon', coordinates: newPolys[0] } : { type: 'MultiPolygon', coordinates: newPolys },
+  })
 }
 
 const out = { type: 'FeatureCollection', features }
@@ -140,19 +191,25 @@ const LANDLOCKED = ['AFG', 'ARM', 'AUT', 'BDI', 'BFA', 'BFA', 'BLR', 'BOL', 'BWA
 const centroids = {}
 for (const f of features) {
   const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates
-  let best = null, bestArea = -1
+  let best = null, bestArea = -1, totalArea = 0
   for (const poly of polys) {
     const ring = poly[0]
-    let area = 0
-    for (let i = 0; i < ring.length - 1; i++) area += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1]
-    area = Math.abs(area / 2)
+    const area = ringArea(ring)
+    totalArea += area
     if (area > bestArea) { bestArea = area; best = ring }
   }
   let cx = 0, cy = 0
   for (const [x, y] of best) { cx += x; cy += y }
-  centroids[f.id] = { lon: round2(cx / best.length), lat: round2(cy / best.length), coastal: !LANDLOCKED.includes(f.id) }
+  centroids[f.id] = { lon: round2(cx / best.length), lat: round2(cy / best.length), coastal: !LANDLOCKED.includes(f.id), area: Math.round(totalArea) }
 }
 fs.writeFileSync(path.join(outDir, 'centroids.json'), JSON.stringify(centroids))
+
+// decorative Antarctica (not playable)
+const antFeatures = antarcticaRings.map(rings => ({
+  type: 'Feature', properties: {},
+  geometry: rings.length === 1 ? { type: 'Polygon', coordinates: rings } : { type: 'MultiPolygon', coordinates: rings.map(r => [r]) },
+}))
+fs.writeFileSync(path.join(outDir, 'antarctica.geo.json'), JSON.stringify({ type: 'FeatureCollection', features: antFeatures }))
 
 console.log('features:', features.length)
 console.log('adjacency edges:', adjacency.length)
