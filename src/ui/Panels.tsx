@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import type { GameState, PlayerOrder } from '../sim/types'
+import type { GameState, PlayerOrder, TechBranch } from '../sim/types'
 import { monthName } from '../sim/types'
 import { power, regionsOf, regionName } from '../sim/setup'
+import { BRANCHES, BRANCH_INFO, MAX_TIER, researchCost, canResearch, branchName } from '../sim/tech'
 import { t, TREATY_KEYS } from '../i18n'
 
 // ---------------- Events ----------------
@@ -21,6 +22,47 @@ export function EventsPanel({ state }: { state: GameState }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ---------------- Newspaper (era-style clippings) ----------------
+const NEWS_KIND_ICON: Record<string, string> = {
+  war: '⚔️', diplomacy: '🕊️', economy: '📈', internal: '🏛️', world: '🌍', player: '⚡', tech: '🔬',
+}
+
+export function NewspaperPanel({ state }: { state: GameState }) {
+  const lang = state.lang
+  const year = Math.floor(state.month / 12)
+  const items = useMemo(
+    () => [...state.events].filter(e => e.major || e.kind === 'war' || e.kind === 'diplomacy' || e.kind === 'tech' || e.kind === 'internal').reverse().slice(0, 24),
+    [state.events],
+  )
+  return (
+    <div className="panel news-panel">
+      <div className="news-masthead">
+        <span className="news-rule" />
+        <b>{t(lang, 'newspaper')} · {year}</b>
+        <span className="news-rule" />
+      </div>
+      {items.length === 0 && <p className="hint">{t(lang, 'registry_empty')}</p>}
+      <div className="news-grid">
+        {items.map(e => {
+          const params = { ...e.params }
+          if (params.region) params.region = regionName(String(params.region), lang, year)
+          return (
+            <article key={e.id} className={'news-clip' + (e.major ? ' major' : '')}>
+              <div className="news-date">{monthName(e.month, lang)}</div>
+              <h4>{NEWS_KIND_ICON[e.kind] ?? '•'} {t(lang, e.key, params)}</h4>
+              <div className="news-body">
+                {lang === 'ru'
+                  ? 'Собственный корреспондент сообщает подробности с места событий. Редакция продолжает следить за развитием ситуации.'
+                  : 'Our own correspondent reports details from the scene. The editorial board continues to follow the developing situation.'}
+              </div>
+            </article>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -72,6 +114,55 @@ export function TreatiesPanel({ state, onBreak }: { state: GameState; onBreak: (
   )
 }
 
+// ---------------- Tech tree ----------------
+export function TechPanel({ state, onOrder }: { state: GameState; onOrder: (o: PlayerOrder) => void }) {
+  const lang = state.lang
+  const p = state.countries[state.playerId]
+  const year = Math.floor(state.month / 12)
+  if (!p) return null
+  return (
+    <div className="panel tech-panel">
+      <div className="tech-head">
+        <b>🔬 {t(lang, 'tech_tree')}</b>
+        <span className="hint">{t(lang, 'tech')}: {p.tech.toFixed(1)} · {t(lang, 'science_pts')}: {Math.round(p.science)}</span>
+      </div>
+      <div className="tech-grid">
+        {BRANCHES.map(b => {
+          const tier = p.techTree[b] ?? 0
+          const reason = canResearch(p, b, year)
+          const c = researchCost(p, b)
+          return (
+            <div key={b} className={'tech-card' + (reason ? ' locked' : '')}>
+              <div className="tech-card-head">
+                <span className="tech-icon">{BRANCH_INFO[b].icon}</span>
+                <b>{branchName(b, lang)}</b>
+              </div>
+              <div className="tech-pips">
+                {Array.from({ length: MAX_TIER }, (_, i) => (
+                  <span key={i} className={'pip' + (i < tier ? ' on' : '')} />
+                ))}
+              </div>
+              <div className="tech-card-foot">
+                {reason ? (
+                  <span className="hint">{reason === 'era' ? '⏳ ' + t(lang, 'era_locked') : t(lang, 'max_tier')}</span>
+                ) : (
+                  <>
+                    <span className="tech-cost">−{c}💰</span>
+                    <button className="btn primary sm" disabled={p.treasury < c} onClick={() => onOrder({ type: 'research_branch', target: b })}>
+                      {t(lang, 'research_b')}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <p className="hint">{t(lang, 'research_hint')}</p>
+    </div>
+  )
+}
+
 // ---------------- Actions ----------------
 export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }: {
   state: GameState
@@ -84,11 +175,19 @@ export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }
   const p = state.countries[state.playerId]
   const [decree, setDecree] = useState('')
   if (!p) return null
+  const civCost = Math.round(150 + p.factoriesCiv * 8)
+  const milCost = Math.round(200 + p.factoriesMil * 10)
   return (
     <div className="panel actions-panel">
       <div className="act-grid">
         <button className="btn" onClick={() => onOrder({ type: 'invest' })} title={t(lang, 'invest_hint')}>
           🏭 {t(lang, 'invest')} <em>−{Math.round(p.treasury * 0.15)}💰</em>
+        </button>
+        <button className="btn" onClick={() => onOrder({ type: 'build_civ' })}>
+          🧱 {t(lang, 'build_civ')} <em>−{civCost}💰</em>
+        </button>
+        <button className="btn" onClick={() => onOrder({ type: 'build_mil' })}>
+          ⚙️ {t(lang, 'build_mil')} <em>−{milCost}💰</em>
         </button>
         <button className="btn" onClick={() => onOrder({ type: 'research' })} title={t(lang, 'research_hint')}>
           🔬 {t(lang, 'research')} <em>−{Math.round(120 * p.tech)}💰</em>
@@ -106,6 +205,13 @@ export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }
           ⚖️ {t(lang, 'stabilize')} <em>−100💰</em>
         </button>
       </div>
+      <div className="res-row" title={t(lang, 'resources')}>
+        <span>🌾 {Math.round(p.stockpile.grain)}</span>
+        <span>🛢 {Math.round(p.stockpile.oil)}</span>
+        <span>⛓ {Math.round(p.stockpile.steel)}</span>
+        <span>💎 {Math.round(p.stockpile.rare)}</span>
+        <span title={t(lang, 'equipment')}>🔧 {Math.round(p.equipment)}</span>
+      </div>
       <div className="sliders">
         <label>{t(lang, 'tax_rate')}: <b>{Math.round(p.taxRate * 100)}%</b>
           <input type="range" min={10} max={50} value={p.taxRate * 100} onChange={e => onSetRate('tax', Number(e.target.value) / 100)} />
@@ -114,11 +220,6 @@ export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }
           <input type="range" min={0} max={60} value={p.investRate * 100} onChange={e => onSetRate('invest', Number(e.target.value) / 100)} />
         </label>
       </div>
-      {state.pendingOrders.length > 0 && (
-        <div className="queued">
-          <b>{t(lang, 'queued_orders')}:</b> {state.pendingOrders.map(o => o.type).join(', ')}
-        </div>
-      )}
       <div className="decree-box">
         <label>⚡ {t(lang, 'decree')}</label>
         <textarea
@@ -148,11 +249,6 @@ export function AdvisorPanel({ state }: { state: GameState }) {
     }
     const myPower = power(p)
     const others = Object.values(state.countries).filter(c => c.alive && !c.isPlayer)
-    const neighbors = new Set<string>()
-    for (const r of regionsOf(state, p.id)) for (const nb of Object.keys(state.regionOwner)) {
-      // cheap neighbor check via wars is wrong; use adjacency imported in setup
-    }
-    // use adjacency from setup module
     const threats = others
       .map(c => ({ c, ratio: power(c) / Math.max(1, myPower), rel: p.relations[c.id] ?? 0 }))
       .filter(x => x.ratio > 0.9 && x.rel < 10)
@@ -171,6 +267,7 @@ export function AdvisorPanel({ state }: { state: GameState }) {
     if (income < upkeep) econ.push('adv_econ_deficit')
     else econ.push('adv_econ_surplus')
     if (p.stability < 30) econ.push('adv_low_stab')
+    if (p.stockpile.grain <= 5) econ.push('adv_grain_low')
     const diplo: string[] = []
     const worst = threats[0]
     if (worst) diplo.push('adv_treaty_suggest')
@@ -203,7 +300,7 @@ export function AdvisorPanel({ state }: { state: GameState }) {
       <div className="adv-col">
         <h4>🏦 {t(lang, 'adv_economy')}</h4>
         {advice.econ.map(k => (
-          <div key={k} className="adv-line">{k === 'adv_econ_deficit' ? '📉 ' : k === 'adv_econ_surplus' ? '📈 ' : '🚨 '}
+          <div key={k} className="adv-line">{k === 'adv_econ_deficit' ? '📉 ' : k === 'adv_econ_surplus' ? '📈 ' : k === 'adv_grain_low' ? '🌾 ' : '🚨 '}
             {t(lang, k, { n: Math.max(0, advice.surplus ?? 0) })}</div>
         ))}
         <h4>🤝 {t(lang, 'adv_diplo')}</h4>
@@ -215,3 +312,5 @@ export function AdvisorPanel({ state }: { state: GameState }) {
     </div>
   )
 }
+
+export type { TechBranch }

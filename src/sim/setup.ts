@@ -1,7 +1,8 @@
-import type { Country, GameState, Lang, GovernmentType, Personality } from './types'
+import type { Country, GameState, Lang, GovernmentType, Personality, Ideology } from './types'
 import { SNAPSHOTS, SNAPSHOT_POLITIES, snapshotForYear } from '../data/snapshots'
 import { MODERN, ANCIENT_NAMES } from '../data/polities'
 import { POP, DEV, LANDLOCKED } from '../data/regionMeta'
+import { leaderFor } from '../data/leaders'
 import adjacencyRaw from '../data/adjacency.json'
 import centroidsRaw from '../data/centroids.json'
 
@@ -74,6 +75,7 @@ export interface SetupOptions {
   playerId: string
   difficulty: number
   lang: Lang
+  victoryEnabled?: boolean
 }
 
 export function regionName(regionId: string, lang: Lang, year: number): string {
@@ -143,8 +145,13 @@ export function createGame(opts: SetupOptions): GameState {
     const divisions = Math.max(1, Math.round(population * milF * (0.5 + tech / 12) * (personality === 'militarist' ? 1.3 : 1)))
     const navy = coastal ? Math.round(industry / 60) + 1 : 0
 
+    const ideology = ideologyFromGov(government)
+    const lead = leaderFor(id, snap.year, personality)
+
     countries[id] = {
       id, name, color, flag, government, personality,
+      ideology,
+      leader: lead.name || undefined,
       isPlayer: id === opts.playerId, alive: true,
       population, industry, tech,
       treasury: Math.round(industry * 12),
@@ -154,6 +161,21 @@ export function createGame(opts: SetupOptions): GameState {
       taxRate: 0.2, investRate: 0.25,
       reputation: 55 + Math.round(seed() * 30),
       relations: {}, aiMemory: {}, lastAiActionMonth: -99,
+      resources: { grain: 0, oil: 0, steel: 0, rare: 0 },
+      stockpile: { grain: 20, oil: 5, steel: 20, rare: 2 },
+      factoriesCiv: Math.max(1, Math.round(industry / 300)),
+      factoriesMil: Math.max(0, Math.round(industry / 600)),
+      equipment: Math.round(divisions * 0.5),
+      techTree: {
+        inf: Math.min(4, Math.floor(techBase / 2)),
+        arm: techBase > 4.5 ? 1 : 0,
+        air: techBase > 5 ? 1 : 0,
+        nav: coastal && techBase > 4 ? 1 : 0,
+        ind: Math.min(3, Math.floor(techBase / 3)),
+        sci: 0,
+      },
+      science: 0,
+      prestige: 40 + Math.round(seed() * 30),
     }
   }
 
@@ -169,6 +191,8 @@ export function createGame(opts: SetupOptions): GameState {
   const startMonth = snap.year * 12
   return {
     lang: opts.lang,
+    theme: 'dark',
+    muted: false,
     startYear: snap.year,
     month: startMonth,
     monthCount: 0,
@@ -184,7 +208,21 @@ export function createGame(opts: SetupOptions): GameState {
     pendingOrders: [],
     nextId: 2,
     gameOver: false,
+    victoryEnabled: opts.victoryEnabled ?? false,
+    victory: undefined,
     difficulty: opts.difficulty,
+    history: [],
+    tutorialStep: 0,
+  }
+}
+
+export function ideologyFromGov(g: GovernmentType): Ideology {
+  switch (g) {
+    case 'communist': return 'communism'
+    case 'junta': case 'oligarchy': return 'fascism'
+    case 'monarchy': case 'empire': return 'monarchism'
+    case 'theocracy': return 'theocracy'
+    default: return 'democracy'
   }
 }
 

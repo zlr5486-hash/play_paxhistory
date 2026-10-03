@@ -10,7 +10,7 @@ import { fmtNum } from '../sim/types'
 interface Props {
   lang: Lang
   setLang: (l: Lang) => void
-  onStart: (opts: { year: number; playerId: string; difficulty: number; lang: Lang }) => void
+  onStart: (opts: { year: number; playerId: string; difficulty: number; lang: Lang; victoryEnabled: boolean }) => void
   onExit: () => void
 }
 
@@ -18,6 +18,7 @@ export default function Setup({ lang, setLang, onStart, onExit }: Props) {
   const [snapIdx, setSnapIdx] = useState(4) // 1936 default
   const [playerId, setPlayerId] = useState<string | null>(null)
   const [difficulty, setDifficulty] = useState(2)
+  const [victoryEnabled, setVictoryEnabled] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedMap, setSelectedMap] = useState<string | null>(null)
 
@@ -100,10 +101,16 @@ export default function Setup({ lang, setLang, onStart, onExit }: Props) {
                 {[0, 1, 2, 3, 4].map(d => <option key={d} value={d}>{t(lang, 'diff_' + d)}</option>)}
               </select>
             </label>
+            <label className="diff-label victory-toggle" title={t(lang, 'victory_enable')}>
+              <input type="checkbox" checked={victoryEnabled} onChange={e => setVictoryEnabled(e.target.checked)} />
+              <span>🏆 {t(lang, 'victory_enable')}: {lang === 'ru'
+                ? 'доминирование, экономика, наука, культура'
+                : 'domination, economy, science, culture'}</span>
+            </label>
             <button
               className="btn primary big"
               disabled={!playerId}
-              onClick={() => playerId && onStart({ year: snap.year, playerId, difficulty, lang })}
+              onClick={() => playerId && onStart({ year: snap.year, playerId, difficulty, lang, victoryEnabled })}
             >
               {playerId ? t(lang, 'start_game') : t(lang, 'pick_country_first')}
             </button>

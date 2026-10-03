@@ -1,9 +1,10 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameState, Lang, PlayerOrder, TreatyType } from './sim/types'
 import { createGame } from './sim/setup'
 import { advanceMonths, applyOrder, proposeTreaty, breakTreaty, declareWar, changeRel, ev } from './sim/engine'
 import { parseDecree } from './sim/parser'
 import { llmDecree, loadAiSettings, saveAiSettings, type AiSettings } from './llm'
+import { sfx, setMuted } from './sound'
 import { t } from './i18n'
 import Setup from './ui/Setup'
 import Game, { type Toast } from './ui/Game'
@@ -33,6 +34,10 @@ export default function App() {
   const [aiCfg, setAiCfg] = useState<AiSettings>(() => loadAiSettings())
   const toastId = useRef(1)
 
+  useEffect(() => {
+    document.body.classList.toggle('parchment', state?.theme === 'parchment')
+  }, [state?.theme])
+
   const setLang = (l: Lang) => { localStorage.setItem(LS_LANG, l); setLangState(l) }
 
   const toast = useCallback((text: string, kind: Toast['kind'] = 'info') => {
@@ -50,23 +55,28 @@ export default function App() {
     })
   }, [])
 
-  const startGame = (opts: { year: number; playerId: string; difficulty: number; lang: Lang }) => {
+  const startGame = (opts: { year: number; playerId: string; difficulty: number; lang: Lang; victoryEnabled: boolean }) => {
     const g = createGame(opts)
     setState(g)
     setSelected(opts.playerId)
     setScreen('game')
+    sfx.ok()
   }
 
   const advance = (months: number) => {
+    sfx.turn()
     mutate(s => {
-      for (const o of s.pendingOrders) applyOrder(s, o)
-      s.pendingOrders = []
       advanceMonths(s, months)
       saveState(s, LS_AUTO)
     })
   }
 
-  const order = (o: PlayerOrder) => mutate(s => { applyOrder(s, o) })
+  // decrees & orders apply IMMEDIATELY — no queue
+  const order = (o: PlayerOrder) => mutate(s => {
+    const ok = applyOrder(s, o)
+    if (ok) sfx.click()
+  })
+
   const setRate = (kind: 'tax' | 'invest', v: number) => mutate(s => {
     const p = s.countries[s.playerId]
     if (!p) return
@@ -83,54 +93,64 @@ export default function App() {
       setDecreeBusy(false)
       if (res) {
         mutate(s => {
-          s.pendingOrders.push(...res.orders)
+          for (const o of res.orders) applyOrder(s, o, true)
           if (res.narrative) {
             s.lastNarrative = res.narrative
             ev(s, 'player', 'ev_decree_narrative', { text: res.narrative })
           }
         })
         toast(t(state.lang, 'decree_parsed', { n: res.orders.length }), 'ok')
+        sfx.ok()
         return
       }
     }
-    // offline fallback: keyword parser
     const p = state.countries[state.playerId]
     const orders = parseDecree(text, p?.treasury ?? 0)
-    if (orders.length === 0) { toast(t(state.lang, 'decree_empty'), 'bad'); return }
-    mutate(s => { s.pendingOrders.push(...orders) })
+    if (orders.length === 0) { toast(t(state.lang, 'decree_empty'), 'bad'); sfx.bad(); return }
+    mutate(s => { for (const o of orders) applyOrder(s, o, true) })
     toast(t(state.lang, 'decree_parsed', { n: orders.length }), 'ok')
+    sfx.ok()
   }
 
   const improve = (target: string) => mutate(s => {
     const p = s.countries[s.playerId]
-    if (!p || p.treasury < 50) { return }
+    if (!p || p.treasury < 50) return
     p.treasury -= 50
     changeRel(s, s.playerId, target, 8)
     ev(s, 'diplomacy', 'ev_relations_improved', { a: p.name, b: s.countries[target]?.name ?? '' })
+    sfx.click()
   })
 
   const propose = (target: string, type: TreatyType) => mutate(s => {
     const res = proposeTreaty(s, s.playerId, target, type)
     toast(t(s.lang, res.accepted ? 'accepted' : res.reasonKey === 'reason_hesitant' ? 'hesitant' : 'refused'), res.accepted ? 'ok' : 'bad')
+    if (res.accepted) sfx.treaty(); else sfx.bad()
   })
 
-  const war = (target: string) => mutate(s => { declareWar(s, s.playerId, target) })
+  const war = (target: string, playerControlled: boolean) => mutate(s => {
+    declareWar(s, s.playerId, target, undefined, playerControlled)
+    sfx.war()
+  })
   const peace = (target: string) => mutate(s => {
     const res = proposeTreaty(s, s.playerId, target, 'peace')
     toast(t(s.lang, res.accepted ? 'accepted' : 'refused'), res.accepted ? 'ok' : 'bad')
+    if (res.accepted) sfx.treaty()
   })
-  const breakTr = (id: number) => mutate(s => { breakTreaty(s, id, s.playerId) })
+  const breakTr = (id: number) => mutate(s => { breakTreaty(s, id, s.playerId); sfx.bad() })
 
-  const save = () => { if (state) { saveState(state, LS_MANUAL); toast(t(state.lang, 'saved'), 'ok') } }
+  const toggleTheme = () => mutate(s => { s.theme = s.theme === 'dark' ? 'parchment' : 'dark' })
+  const toggleMute = () => mutate(s => { s.muted = !s.muted; setMuted(s.muted) })
+  const tutNext = () => mutate(s => { s.tutorialStep++ })
+
+  const save = () => { if (state) { saveState(state, LS_MANUAL); toast(t(state.lang, 'saved'), 'ok'); sfx.ok() } }
   const load = () => {
     const g = loadState(LS_MANUAL) ?? loadState(LS_AUTO)
-    if (g) { setState(g); setSelected(g.playerId); setScreen('game'); toast(t(g.lang, 'loaded'), 'ok') }
+    if (g) { setState(g); setSelected(g.playerId); setScreen('game'); setMuted(g.muted); toast(t(g.lang, 'loaded'), 'ok') }
     else toast(lang === 'ru' ? 'Нет сохранений' : 'No saves', 'bad')
   }
 
   const hasSave = !!localStorage.getItem(LS_AUTO) || !!localStorage.getItem(LS_MANUAL)
 
-  // ---------- render ----------
   if (screen === 'setup') {
     return <Setup lang={lang} setLang={setLang} onStart={startGame} onExit={() => setScreen('menu')} />
   }
@@ -157,6 +177,9 @@ export default function App() {
           onLoad={load}
           onMenu={() => { saveState(state, LS_AUTO); setScreen('menu') }}
           onSettings={() => setShowSettings(true)}
+          onToggleTheme={toggleTheme}
+          onToggleMute={toggleMute}
+          onTutNext={tutNext}
         />
         {showSettings && (
           <div className="overlay" onClick={() => setShowSettings(false)}>
@@ -186,7 +209,6 @@ export default function App() {
     )
   }
 
-  // ---------- main menu ----------
   return (
     <div className="menu-screen">
       <div className="menu-inner">
@@ -205,8 +227,8 @@ export default function App() {
         </div>
         <div className="menu-footer">
           {lang === 'ru'
-            ? 'Песочница: любая держава, любая эпоха · Реестр договоров · Живой ИИ-мир · Экономика в цифрах'
-            : 'Sandbox: any nation, any era · Treaty registry · Living AI world · Economy in numbers'}
+            ? 'Песочница: любая держава, любая эпоха · Реестр договоров · Живой ИИ-мир · Экономика в цифрах · Дерево технологий · Идеологии и революции'
+            : 'Sandbox: any nation, any era · Treaty registry · Living AI world · Numeric economy · Tech tree · Ideologies & revolutions'}
         </div>
       </div>
     </div>
