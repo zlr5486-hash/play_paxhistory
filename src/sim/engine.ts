@@ -656,7 +656,9 @@ export function updateEconomy(state: GameState, dt: number): void {
     if (!c.alive) continue
     const mods = techMods(c)
     const sanN = state.treaties.reduce((n, t) => n + (t.type === 'sanctions' && t.status === 'active' && t.parties[1] === c.id ? 1 : 0), 0)
-    const income = c.industry * c.taxRate * Math.max(0.6, 1 - sanN * 0.08)
+    // honest difficulty bonus: AI economies scale, player's does not
+    const diffBonus = !c.isPlayer ? 1 + state.difficulty * 0.05 : 1
+    const income = c.industry * c.taxRate * Math.max(0.6, 1 - sanN * 0.08) * diffBonus
     const upkeep = c.divisions * (1.5 + c.tech * 0.35) + c.navy * 1.2 + c.population * 0.05
     const invest = income * c.investRate
     const net = income - upkeep - invest
@@ -900,6 +902,16 @@ export function aiTurns(state: GameState, dt: number): void {
             return
           }
         }
+      }
+    }
+
+    // economic pressure: sanction hated rivals instead of (or before) war
+    for (const [other, rel] of Object.entries(c.relations)) {
+      const oc = state.countries[other]
+      if (!oc?.alive || rel > -50 || rnd() > 0.06 * dt) continue
+      if (!hasTreaty(state, c.id, other, 'sanctions')) {
+        imposeSanctions(state, c.id, other)
+        break
       }
     }
 

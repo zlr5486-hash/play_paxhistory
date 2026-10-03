@@ -450,3 +450,5 @@ body.parchment .tutorial-card b { color: #8a6508; }
 .sc-pending { margin-top: 8px; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .sc-pending label { font-size: 12.5px; flex: 1; }
 .nuke-row { padding: 2px 0; }
+.news-art { width: 76px; float: right; margin: 2px 0 4px 8px; opacity: 0.85; }
+.news-clip-body { display: flow-root; }

@@ -31,6 +31,42 @@ const NEWS_KIND_ICON: Record<string, string> = {
   war: '⚔️', diplomacy: '🕊️', economy: '📈', internal: '🏛️', world: '🌍', player: '⚡', tech: '🔬',
 }
 
+// era-engraving style vignettes (original deterministic line art)
+function Vignette({ kind }: { kind: string }) {
+  const ink = '#3a2f1a'
+  const common = { stroke: ink, strokeWidth: 1.1, fill: 'none', strokeLinecap: 'round' as const }
+  return (
+    <svg viewBox="0 0 72 44" className="news-art" aria-hidden>
+      <rect x="1" y="1" width="70" height="42" fill="none" stroke={ink} strokeWidth="0.8" strokeDasharray="2 2" opacity="0.6" />
+      {kind === 'war' && (<g {...common}>
+        <line x1="18" y1="34" x2="52" y2="10" /><line x1="52" y1="34" x2="20" y2="12" />
+        <circle cx="18" cy="34" r="2.4" /><circle cx="52" cy="34" r="2.4" />
+        <path d="M36 6 l2 4 h-4 z" fill={ink} />
+      </g>)}
+      {kind === 'diplomacy' && (<g {...common}>
+        <path d="M20 30 q16 -14 32 0" /><circle cx="20" cy="30" r="2" /><circle cx="52" cy="30" r="2" />
+        <path d="M36 14 v6 m-4 2 h8" />
+      </g>)}
+      {kind === 'economy' && (<g {...common}>
+        <circle cx="30" cy="26" r="8" /><circle cx="30" cy="26" r="4.5" />
+        <path d="M44 32 v-12 m6 12 v-8 m6 8 v-16" />
+      </g>)}
+      {kind === 'internal' && (<g {...common}>
+        <path d="M22 32 h28 M26 32 v-12 M32 32 v-12 M40 32 v-12 M46 32 v-12 M22 20 h28 l-14 -8 z" />
+      </g>)}
+      {kind === 'tech' && (<g {...common}>
+        <circle cx="33" cy="20" r="8" /><path d="M33 28 v6 m-4 0 h8" /><path d="M46 14 l6 6 m0 -6 l-6 6" />
+      </g>)}
+      {(kind === 'world' || kind === 'player') && (<g {...common}>
+        <circle cx="36" cy="22" r="12" /><path d="M24 22 h24 M36 10 v24 M28 14 q8 6 16 0 M28 30 q8 -6 16 0" />
+      </g>)}
+      <g stroke={ink} strokeWidth="0.5" opacity="0.35">
+        {Array.from({ length: 6 }, (_, i) => <line key={i} x1={6 + i * 12} y1="40" x2={12 + i * 12} y2="40" />)}
+      </g>
+    </svg>
+  )
+}
+
 export function NewspaperPanel({ state }: { state: GameState }) {
   const lang = state.lang
   const year = Math.floor(state.month / 12)
@@ -53,11 +89,14 @@ export function NewspaperPanel({ state }: { state: GameState }) {
           return (
             <article key={e.id} className={'news-clip' + (e.major ? ' major' : '')}>
               <div className="news-date">{monthName(e.month, lang)}</div>
-              <h4>{NEWS_KIND_ICON[e.kind] ?? '•'} {t(lang, e.key, params)}</h4>
-              <div className="news-body">
-                {lang === 'ru'
-                  ? 'Собственный корреспондент сообщает подробности с места событий. Редакция продолжает следить за развитием ситуации.'
-                  : 'Our own correspondent reports details from the scene. The editorial board continues to follow the developing situation.'}
+              <div className="news-clip-body">
+                {e.major && <Vignette kind={e.kind} />}
+                <h4>{NEWS_KIND_ICON[e.kind] ?? '•'} {t(lang, e.key, params)}</h4>
+                <div className="news-body">
+                  {lang === 'ru'
+                    ? 'Собственный корреспондент сообщает подробности с места событий. Редакция продолжает следить за развитием ситуации.'
+                    : 'Our own correspondent reports details from the scene. The editorial board continues to follow the developing situation.'}
+                </div>
               </div>
             </article>
           )
