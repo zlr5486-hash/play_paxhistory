@@ -228,7 +228,7 @@ export default function Game(props: Props) {
           <div className="modal victory-modal">
             <h2>🏆 {t(lang, 'victory_title')}</h2>
             <p>{t(lang, 'victory_text', {
-              who: state.countries[state.victory.winner]?.name ?? state.victory.winner,
+              country: state.countries[state.victory.winner]?.name ?? state.victory.winner,
               type: t(lang, 'victory_' + state.victory.type),
             })}</p>
             <button className="btn primary" onClick={props.onMenu}>{t(lang, 'to_menu')}</button>

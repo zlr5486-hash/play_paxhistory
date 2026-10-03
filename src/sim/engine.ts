@@ -7,7 +7,7 @@ import { POP, LANDLOCKED } from '../data/regionMeta'
 import { MODERN } from '../data/polities'
 import { depositOf } from '../data/resources'
 import { cultureOf } from '../data/cultures'
-import { techMods, researchCost, canResearch, MAX_TIER, BRANCHES } from './tech'
+import { techMods, researchCost, canResearch, MAX_TIER, BRANCHES, branchName } from './tech'
 
 const rnd = Math.random
 const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)]
@@ -69,7 +69,7 @@ export function applyOrder(state: GameState, o: PlayerOrder, silent = false): bo
       if (!cost(c)) return false
       p.techTree[branch] = (p.techTree[branch] ?? 0) + 1
       p.science += 10
-      if (!silent) ev(state, 'tech', 'ev_tech_advance', { country: p.name, branch: String(branch), tier: p.techTree[branch] })
+      if (!silent) ev(state, 'tech', 'ev_tech_advance', { country: p.name, branch: branchName(branch, state.lang), tier: p.techTree[branch] })
       return true
     }
     case 'propaganda': {
@@ -122,7 +122,10 @@ export function applyOrder(state: GameState, o: PlayerOrder, silent = false): bo
       const d = o.text as Directive
       if (!['offensive', 'balanced', 'defensive'].includes(d)) return false
       w.directives[state.playerId] = d
-      if (!silent) ev(state, 'war', 'ev_directive_set', { dir: d })
+      if (!silent) {
+        const dirLabel = ({ offensive: ['Наступление', 'Offensive'], balanced: ['Баланс', 'Balanced'], defensive: ['Оборона', 'Defensive'] })[d][state.lang === 'ru' ? 0 : 1]
+        ev(state, 'war', 'ev_directive_set', { dir: dirLabel })
+      }
       return true
     }
     case 'offensive': {
@@ -450,7 +453,8 @@ export function updateWars(state: GameState, dt: number): void {
           const d = rnd() < 0.65 ? smart : (pick(['offensive', 'balanced', 'defensive'] as Directive[]))
           if (d !== w.directives[id]) {
             w.directives[id] = d
-            ev(state, 'war', 'ev_minister_order', { general: w.generals?.[id]?.name ?? '—', dir: d })
+            const dirLabel = ({ offensive: ['Наступление', 'Offensive'], balanced: ['Баланс', 'Balanced'], defensive: ['Оборона', 'Defensive'] })[d][state.lang === 'ru' ? 0 : 1]
+            ev(state, 'war', 'ev_minister_order', { general: w.generals?.[id]?.name ?? '—', dir: dirLabel })
           }
         }
       }
@@ -789,7 +793,8 @@ export function internalEvents(state: GameState, dt: number): void {
         c.government = govFromIdeology(newIdeology)
         c.stability = Math.min(100, c.stability + 20)
         c.warSupport = Math.min(100, c.warSupport + 10)
-        ev(state, 'internal', 'ev_revolution', { country: c.name, from: old, to: newIdeology }, true)
+        const ideo = (i: Ideology) => ({ monarchism: ['монархизм', 'monarchism'], fascism: ['фашизм', 'fascism'], communism: ['коммунизм', 'communism'], democracy: ['демократия', 'democracy'], theocracy: ['теократия', 'theocracy'] })[i][state.lang === 'ru' ? 0 : 1]
+        ev(state, 'internal', 'ev_revolution', { country: c.name, from: ideo(old), to: ideo(newIdeology) }, true)
       }
     }
     // plague
@@ -1039,8 +1044,13 @@ export function resolveCongress(state: GameState): void {
       for (const c of Object.values(state.countries)) if (c.alive) c.prestige = Math.min(100, c.prestige + 2)
     }
   }
+  const resLabel = ({
+    cong_freetrade: ['Свободная торговля для всех', 'Free trade for all'],
+    cong_condemn: ['Осуждение агрессора', 'Condemnation of the rogue state'],
+    cong_peace: ['Призыв к прекращению войн', 'Call to end the wars'],
+  } as Record<string, [string, string]>)[cg.resolution]?.[state.lang === 'ru' ? 0 : 1] ?? cg.resolution
   ev(state, 'diplomacy', cg.passed ? 'ev_congress_pass' : 'ev_congress_fail',
-    { res: cg.resolution, country: state.countries[cg.proposedBy]?.name ?? '' }, true)
+    { res: resLabel, country: state.countries[cg.proposedBy]?.name ?? '' }, true)
   state.congress = undefined
 }
 
@@ -1060,12 +1070,25 @@ const ACH_DEFS: { id: string; check: (s: GameState) => boolean }[] = [
 
 export const ACH_IDS = ACH_DEFS.map(a => a.id)
 
+const ACH_LABELS: Record<string, [string, string]> = {
+  ach_first_conquest: ['Первое завоевание', 'First Conquest'],
+  ach_nuclear: ['Ядерная держава', 'Nuclear Power'],
+  ach_diplomat: ['Дипломат', 'Diplomat'],
+  ach_tycoon: ['Магнат', 'Tycoon'],
+  ach_survivor: ['Выживший', 'Survivor'],
+  ach_general_staff: ['Генштаб', 'General Staff'],
+  ach_minister: ['Делегирование', 'Delegation'],
+  ach_sanctions: ['Экономическое оружие', 'Economic Weapon'],
+  ach_victory: ['Победитель', 'Victor'],
+  ach_century: ['Столетие у власти', 'Century in Power'],
+}
+
 export function checkAchievements(state: GameState): void {
   if (!state.achievements) state.achievements = []
   for (const a of ACH_DEFS) {
     if (!state.achievements.includes(a.id) && a.check(state)) {
       state.achievements.push(a.id)
-      ev(state, 'world', 'ev_achievement', { ach: a.id }, true)
+      ev(state, 'world', 'ev_achievement', { ach: ACH_LABELS[a.id]?.[state.lang === 'ru' ? 0 : 1] ?? a.id }, true)
     }
   }
 }
