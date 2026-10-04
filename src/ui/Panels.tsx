@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import type { GameState, PlayerOrder, TechBranch } from '../sim/types'
-import { monthName } from '../sim/types'
+import { monthName, fmtNum } from '../sim/types'
 import { power, regionsOf, regionName } from '../sim/setup'
-import { BRANCHES, BRANCH_INFO, MAX_TIER, researchCost, canResearch, branchName } from '../sim/tech'
+import { BRANCHES, BRANCH_INFO, MAX_TIER, TECH_TIERS, researchCost, canResearch, branchName } from '../sim/tech'
+import { gdpOf } from '../sim/engine'
+import { HISTORICAL } from '../data/historical'
 import { t, TREATY_KEYS } from '../i18n'
 
 // ---------------- Events ----------------
@@ -176,6 +178,10 @@ export function TechPanel({ state, onOrder }: { state: GameState; onOrder: (o: P
                 <span className="tech-icon">{BRANCH_INFO[b].icon}</span>
                 <b>{branchName(b, lang)}</b>
               </div>
+              <div className="tech-tier-name">
+                {tier > 0 ? TECH_TIERS[b][tier - 1][lang === 'ru' ? 0 : 1] : '—'}
+                {tier < MAX_TIER && !reason && <em> → {TECH_TIERS[b][tier][lang === 'ru' ? 0 : 1]}</em>}
+              </div>
               <div className="tech-pips">
                 {Array.from({ length: MAX_TIER }, (_, i) => (
                   <span key={i} className={'pip' + (i < tier ? ' on' : '')} />
@@ -206,7 +212,7 @@ export function TechPanel({ state, onOrder }: { state: GameState; onOrder: (o: P
 export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }: {
   state: GameState
   onOrder: (o: PlayerOrder) => void
-  onSetRate: (kind: 'tax' | 'invest', v: number) => void
+  onSetRate: (kind: 'tax' | 'invest' | 'social', v: number) => void
   onDecree: (text: string) => void
   decreeBusy: boolean
 }) {
@@ -258,6 +264,12 @@ export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }
           {t(lang, 'nuke_program')} {p.nukeProgress > 0 ? `(${Math.round(p.nukeProgress)}%)` : ''}
         </button>
       </div>
+      <div className="econ-strip">
+        <span title="GDP">📊 GDP: {fmtNum(gdpOf(p))}</span>
+        <span className={p.debt > gdpOf(p) * 1.5 ? 'neg' : ''} title={t(lang, 'national_debt')}>💳 {t(lang, 'national_debt')}: {fmtNum(p.debt ?? 0)}</span>
+        <span title={t(lang, 'corruption_label')}>🦠 {t(lang, 'corruption_label')}: {Math.round(p.corruption ?? 0)}</span>
+        <span>{t(lang, state.econCycle === 'boom' ? 'cycle_boom' : state.econCycle === 'recession' ? 'cycle_recession' : 'cycle_stable')}</span>
+      </div>
       <div className="sliders">
         <label>{t(lang, 'tax_rate')}: <b>{Math.round(p.taxRate * 100)}%</b>
           <input type="range" min={10} max={50} value={p.taxRate * 100} onChange={e => onSetRate('tax', Number(e.target.value) / 100)} />
@@ -265,6 +277,17 @@ export function ActionsPanel({ state, onOrder, onSetRate, onDecree, decreeBusy }
         <label>{t(lang, 'invest_rate')}: <b>{Math.round(p.investRate * 100)}%</b>
           <input type="range" min={0} max={60} value={p.investRate * 100} onChange={e => onSetRate('invest', Number(e.target.value) / 100)} />
         </label>
+        <label>{t(lang, 'social_spend')}: <b>{Math.round((p.socialSpend ?? 0.1) * 100)}%</b>
+          <input type="range" min={0} max={30} value={Math.round((p.socialSpend ?? 0.1) * 100)} onChange={e => onSetRate('social', Number(e.target.value) / 100)} />
+        </label>
+      </div>
+      <div className="econ-btns">
+        <button className="btn sm" title={t(lang, 'imf_hint')} onClick={() => onOrder({ type: 'imf_loan' })}>
+          {t(lang, 'imf_loan')} <em>+600💰</em>
+        </button>
+        <button className="btn sm" disabled={p.treasury < 200} title={t(lang, 'fight_corruption_hint')} onClick={() => onOrder({ type: 'fight_corruption' })}>
+          {t(lang, 'fight_corruption')} <em>−200💰</em>
+        </button>
       </div>
       <div className="decree-box">
         <label>⚡ {t(lang, 'decree')}</label>
@@ -360,6 +383,16 @@ export function AdvisorPanel({ state }: { state: GameState }) {
         {advice.diplo.map((k, i) => (
           <div key={i} className="adv-line">💬 {t(lang, k, { name: (advice as never as { worst?: { name: string } }).worst?.name ?? '—' })}</div>
         ))}
+        <h4>📜 {lang === 'ru' ? 'Грядущие исторические события' : 'Upcoming historical events'}</h4>
+        {(() => {
+          const year = Math.floor(state.month / 12)
+          const fired = new Set(state.historicalFired ?? [])
+          const soon = HISTORICAL.filter(h => !fired.has(h.id) && h.year >= year && h.year <= year + 12).slice(0, 3)
+          if (soon.length === 0) return <p className="hint">{lang === 'ru' ? 'В ближайшие годы летопись молчит.' : 'The chronicle is quiet for the coming years.'}</p>
+          return soon.map(h => (
+            <div key={h.id} className="adv-line">🔮 {h.year}: {t(lang, h.key)}</div>
+          ))
+        })()}
       </div>
     </div>
   )

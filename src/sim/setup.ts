@@ -178,6 +178,9 @@ export function createGame(opts: SetupOptions): GameState {
       prestige: 40 + Math.round(seed() * 30),
       nukeProgress: 0,
       nukes: 0,
+      debt: Math.round(industry * (3 + Math.max(0, (snap.year - 1800) / 60))),
+      corruption: { democracy: 6, republic: 9, federation: 9, monarchy: 14, empire: 14, theocracy: 18, junta: 20, oligarchy: 24, tribal: 26, communist: 16 }[government] ?? 14,
+      socialSpend: government === 'democracy' || government === 'republic' || government === 'federation' ? 0.18 : 0.1,
     }
   }
 
@@ -190,12 +193,12 @@ export function createGame(opts: SetupOptions): GameState {
     }
   }
 
-  const startMonth = snap.year * 12
+  const startMonth = opts.year * 12
   return {
     lang: opts.lang,
     theme: 'dark',
     muted: false,
-    startYear: snap.year,
+    startYear: opts.year,
     month: startMonth,
     monthCount: 0,
     regionOwner,
@@ -215,6 +218,8 @@ export function createGame(opts: SetupOptions): GameState {
     difficulty: opts.difficulty,
     history: [],
     tutorialStep: 0,
+    econCycle: 'stable',
+    historicalFired: [],
   }
 }
 

@@ -36,9 +36,14 @@ function loadState(key: string): GameState | null {
       c.science ??= 0
       c.prestige ??= 20
       c.ideology ??= 'monarchism'
+      c.debt ??= 0
+      c.corruption ??= 12
+      c.socialSpend ??= 0.1
     }
     s.achievements ??= []
     s.history ??= []
+    s.historicalFired ??= []
+    s.econCycle ??= 'stable'
     s.tutorialStep ??= 6
     s.theme ??= 'dark'
     s.victoryEnabled ??= false
@@ -100,11 +105,12 @@ export default function App() {
     if (ok) sfx.click()
   })
 
-  const setRate = (kind: 'tax' | 'invest', v: number) => mutate(s => {
+  const setRate = (kind: 'tax' | 'invest' | 'social', v: number) => mutate(s => {
     const p = s.countries[s.playerId]
     if (!p) return
     if (kind === 'tax') p.taxRate = v
-    else p.investRate = v
+    else if (kind === 'invest') p.investRate = v
+    else p.socialSpend = v
   })
 
   const decree = async (text: string) => {

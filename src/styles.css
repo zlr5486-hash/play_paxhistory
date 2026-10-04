@@ -452,3 +452,8 @@ body.parchment .tutorial-card b { color: #8a6508; }
 .nuke-row { padding: 2px 0; }
 .news-art { width: 76px; float: right; margin: 2px 0 4px 8px; opacity: 0.85; }
 .news-clip-body { display: flow-root; }
+.econ-strip { display: flex; gap: 14px; flex-wrap: wrap; padding: 5px 2px; font-size: 12.5px; color: var(--dim); }
+.econ-strip .neg { color: var(--red); }
+.econ-btns { display: flex; gap: 8px; padding: 3px 0; flex-wrap: wrap; }
+.tech-tier-name { font-size: 11px; color: var(--dim); margin-bottom: 6px; min-height: 14px; }
+.tech-tier-name em { font-style: normal; color: var(--gold); }

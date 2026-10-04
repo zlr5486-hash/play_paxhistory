@@ -8,13 +8,19 @@ import { MODERN } from '../data/polities'
 import { depositOf } from '../data/resources'
 import { cultureOf } from '../data/cultures'
 import { techMods, researchCost, canResearch, MAX_TIER, BRANCHES, branchName } from './tech'
+import { HISTORICAL, type HistApi } from '../data/historical'
 
 const rnd = Math.random
 const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)]
 
 export function ev(state: GameState, kind: GameEvent['kind'], key: string, params: Record<string, string | number>, major = false): void {
   state.events.push({ id: state.nextId++, month: state.month, kind, key, params, major })
-  if (state.events.length > 500) state.events.splice(0, state.events.length - 500)
+  // trim, but preserve major events (wars, historical moments)
+  while (state.events.length > 600) {
+    const idx = state.events.findIndex(e => !e.major)
+    if (idx === -1) state.events.splice(0, state.events.length - 600)
+    else state.events.splice(idx, 1)
+  }
 }
 
 export function changeRel(state: GameState, a: string, b: string, delta: number): void {
@@ -172,6 +178,20 @@ export function applyOrder(state: GameState, o: PlayerOrder, silent = false): bo
       cg.votes[state.playerId] = o.text as 'yes' | 'no' | 'abstain'
       cg.playerVoted = true
       resolveCongress(state)
+      return true
+    }
+    case 'imf_loan': {
+      if (!cost(0)) return false
+      p.treasury += 600
+      p.debt += 650
+      p.corruption = Math.max(2, (p.corruption ?? 10) - 2)
+      if (!silent) ev(state, 'economy', 'ev_imf_loan', { country: p.name })
+      return true
+    }
+    case 'fight_corruption': {
+      if (!cost(200)) return false
+      p.corruption = Math.max(2, (p.corruption ?? 10) - 6)
+      if (!silent) ev(state, 'economy', 'ev_anti_corruption', { country: p.name, n: Math.round(p.corruption) })
       return true
     }
   }
@@ -662,17 +682,42 @@ export function updateEconomy(state: GameState, dt: number): void {
     const sanN = state.treaties.reduce((n, t) => n + (t.type === 'sanctions' && t.status === 'active' && t.parties[1] === c.id ? 1 : 0), 0)
     // honest difficulty bonus: AI economies scale, player's does not
     const diffBonus = !c.isPlayer ? 1 + state.difficulty * 0.05 : 1
-    const income = c.industry * c.taxRate * Math.max(0.6, 1 - sanN * 0.08) * diffBonus
+    const cycleMod = state.econCycle === 'boom' ? 1.1 : state.econCycle === 'recession' ? 0.85 : 1
+    const corruptMod = Math.max(0.55, 1 - (c.corruption ?? 0) / 100)
+    const income = c.industry * c.taxRate * Math.max(0.6, 1 - sanN * 0.08) * diffBonus * cycleMod * corruptMod
     const upkeep = c.divisions * (1.5 + c.tech * 0.35) + c.navy * 1.2 + c.population * 0.05
+    const social = income * (c.socialSpend ?? 0.1)
     const invest = income * c.investRate
-    const net = income - upkeep - invest
-    c.treasury += net * dt
-    if (c.treasury < 0) {
+    const interest = (c.debt ?? 0) * 0.005 // ~6% yearly on national debt
+    const net = income - upkeep - social - invest - interest
+    if (net >= 0) {
+      // surplus: pay down debt, rest to treasury
+      const paydown = Math.min(c.debt ?? 0, net * 0.4) * dt
+      c.debt = Math.max(0, (c.debt ?? 0) - paydown)
+      c.treasury += (net * dt - paydown)
+    } else {
+      // deficit: borrow
+      c.debt = (c.debt ?? 0) - net * dt
+      c.treasury = Math.max(0, c.treasury + net * dt * 0.3)
+    }
+    if (c.treasury <= 0 && (c.debt ?? 0) > gdpOf(c) * 2) {
+      c.stability = Math.max(0, c.stability - 1.2 * dt)
+      c.divisions = Math.round(c.divisions * (1 - 0.025 * dt))
+      c.equipment = Math.max(0, c.equipment * (1 - 0.02 * dt))
+      if (rnd() < 0.01 * dt) ev(state, 'economy', 'ev_debt_crisis', { country: c.name }, true)
+    } else if (c.treasury < 0) {
       c.stability = Math.max(0, c.stability - 0.8 * dt)
       c.divisions = Math.round(c.divisions * (1 - 0.025 * dt))
       c.equipment = Math.max(0, c.equipment * (1 - 0.02 * dt))
       c.treasury = 0
     }
+    // social programs & corruption dynamics (Millennium-Dawn style)
+    if ((c.socialSpend ?? 0) >= 0.15) c.stability = Math.min(100, c.stability + 0.06 * dt)
+    else if ((c.socialSpend ?? 0) < 0.06 && (c.corruption ?? 0) > 18 && rnd() < 0.004 * dt) {
+      c.stability = Math.max(0, c.stability - 4)
+      ev(state, 'internal', 'ev_protests', { country: c.name })
+    }
+    c.corruption = Math.max(2, Math.min(50, (c.corruption ?? 10) + (state.econCycle === 'recession' ? 0.02 : -0.005) * dt))
     c.industry += invest * 0.05 * Math.max(0.2, (13 - c.tech) / 8) * mods.industryGrowth * dt
     c.tech = Math.min(12, c.tech + 0.0015 * dt * mods.scienceRate)
     c.science += (c.industry * 0.002 + 1) * mods.scienceRate * dt
@@ -832,6 +877,7 @@ function spawnRebel(state: GameState, c: Country, r: string, kind: 'separatist' 
     techTree: { inf: 0, arm: 0, air: 0, nav: 0, ind: 0, sci: 0 },
     science: 0, prestige: 10,
     nukeProgress: 0, nukes: 0,
+    debt: 0, corruption: 20, socialSpend: 0.08,
     leader: '',
   }
   c.relations[newId] = -60
@@ -1070,6 +1116,52 @@ const ACH_DEFS: { id: string; check: (s: GameState) => boolean }[] = [
 
 export const ACH_IDS = ACH_DEFS.map(a => a.id)
 
+// ---------------- real historical events ----------------
+export function gdpOf(c: Country): number {
+  return Math.round(c.industry * (10 + c.population * 0.5))
+}
+
+export function checkHistoricalEvents(state: GameState): void {
+  if (!state.historicalFired) state.historicalFired = []
+  const year = Math.floor(state.month / 12)
+  const month = Math.floor(state.month) % 12
+  const api: HistApi = {
+    ev: (kind, key, params, major) => ev(state, kind, key, params, major),
+    find: (...ids) => {
+      for (const id of ids) {
+        const c = state.countries[id]
+        if (c?.alive) return c
+      }
+      return null
+    },
+    setIdeology: (c, ideo) => {
+      c.ideology = ideo
+      c.government = govFromIdeology(ideo)
+    },
+    war: (att, def) => {
+      if (!att.alive || !def.alive || att.isPlayer || def.isPlayer) return false
+      if (atWarWith(state, att.id, def.id)) return false
+      declareWar(state, att.id, def.id, 'historical', true)
+      return true
+    },
+    rel: (a, b, d) => { changeRel(state, a.id, b.id, d); changeRel(state, b.id, a.id, d) },
+    allAlive: fn => { for (const c of Object.values(state.countries)) if (c.alive) fn(c) },
+    setCycle: c => { state.econCycle = c },
+  }
+  for (const h of HISTORICAL) {
+    if (h.year > year || (h.year === year && (h.month ?? 0) > month)) continue
+    if (state.historicalFired.includes(h.id)) continue
+    if (h.year < state.startYear) continue // started later — history already happened
+    if (h.needs) {
+      const ok = h.needs.every(group => group.some(id => state.countries[id]?.alive))
+      if (!ok) { state.historicalFired.push(h.id); continue }
+    }
+    state.historicalFired.push(h.id)
+    ev(state, 'world', h.key, { year: h.year }, h.major ?? false)
+    try { h.fx?.(state, api) } catch { /* sandbox-safe */ }
+  }
+}
+
 const ACH_LABELS: Record<string, [string, string]> = {
   ach_first_conquest: ['Первое завоевание', 'First Conquest'],
   ach_nuclear: ['Ядерная держава', 'Nuclear Power'],
@@ -1117,12 +1209,18 @@ export function advanceMonths(state: GameState, months: number): GameState {
       state.congress.playerVoted = true
       resolveCongress(state)
     }
-    // yearly history + victory check + achievements
+    // yearly history + victory check + achievements + history timeline
     if (Math.floor(state.month) !== Math.floor(state.month - dt)) {
       const p = state.countries[state.playerId]
       if (p) state.history.push({ month: state.month, industry: Math.round(p.industry), population: +p.population.toFixed(1), regions: regionsOf(state, p.id).length })
+      checkHistoricalEvents(state)
       checkVictory(state)
       checkAchievements(state)
+      // global economic cycle drifts
+      const r = rnd()
+      if (state.econCycle === 'stable' && r < 0.012) { state.econCycle = r < 0.006 ? 'recession' : 'boom'; ev(state, 'economy', state.econCycle === 'recession' ? 'ev_recession' : 'ev_boom', {}, true) }
+      else if (state.econCycle === 'recession' && r < 0.05) { state.econCycle = 'stable'; ev(state, 'economy', 'ev_recovery', {}, false) }
+      else if (state.econCycle === 'boom' && r < 0.06) { state.econCycle = 'stable' }
     }
     const p = state.countries[state.playerId]
     if (p && p.alive && regionsOf(state, state.playerId).length === 0) {

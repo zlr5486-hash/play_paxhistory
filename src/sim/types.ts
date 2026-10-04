@@ -111,6 +111,10 @@ export interface Country {
   // stage B: nuclear program
   nukeProgress: number   // 0..100
   nukes: number
+  // stage B2: Millennium-Dawn-style economy
+  debt: number          // national debt
+  corruption: number    // 0..50, eats revenue
+  socialSpend: number   // 0..0.3 share of budget on social programs
 }
 
 export type EventKind = 'war' | 'diplomacy' | 'economy' | 'internal' | 'world' | 'player' | 'tech'
@@ -160,6 +164,8 @@ export interface GameState {
   achievements?: string[]
   congress?: Congress
   scenarioId?: string                        // custom scenario marker
+  econCycle: 'boom' | 'stable' | 'recession' // global economic cycle
+  historicalFired?: string[]                 // ids of scripted historical events
 }
 
 export const monthName = (m: number, lang: Lang): string => {

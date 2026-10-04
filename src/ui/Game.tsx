@@ -16,7 +16,7 @@ interface Props {
   setSelected: (id: string | null) => void
   onAdvance: (months: number) => void
   onOrder: (o: PlayerOrder) => void
-  onSetRate: (kind: 'tax' | 'invest', v: number) => void
+  onSetRate: (kind: 'tax' | 'invest' | 'social', v: number) => void
   onDecree: (text: string) => void
   decreeBusy: boolean
   onImprove: (target: string) => void
